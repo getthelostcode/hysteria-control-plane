@@ -122,4 +122,83 @@ class ConfigVersionsPageTest extends TestCase
         $this->assertStringContainsString('配置版本管理', $response->getContent());
         $this->assertStringContainsString('http-node', $response->getContent());
     }
+
+    public function test_create_version_button_publishes_and_can_skip_becoming_default(): void
+    {
+        $this->actingAs($this->adminUser());
+        $node = Node::factory()->create(['name' => 'node-new']);
+        $v1 = app(ConfigService::class)->publish($node, "listen: :443\n");
+
+        // 勾上「设为默认下发版本」→ 新版本立刻成为默认
+        Livewire::test(ConfigVersions::class)
+            ->callAction('create_version', [
+                'node_id' => $node->id,
+                'content_yaml' => "listen: :8443\n",
+                'make_current' => true,
+                'reason' => '页面创建',
+            ]);
+
+        $v2 = NodeConfig::query()->where('node_id', $node->id)->where('version', 2)->firstOrFail();
+        $this->assertTrue($v2->is_current);
+        $this->assertFalse($v1->refresh()->is_current);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'config.published']);
+
+        // 不勾 → 只入历史，默认版本不变
+        Livewire::test(ConfigVersions::class)
+            ->callAction('create_version', [
+                'node_id' => $node->id,
+                'content_yaml' => "listen: :9443\n",
+                'make_current' => false,
+                'reason' => '草稿',
+            ]);
+
+        $v3 = NodeConfig::query()->where('node_id', $node->id)->where('version', 3)->firstOrFail();
+        $this->assertFalse($v3->is_current);
+        $this->assertTrue($v2->refresh()->is_current);
+    }
+
+    public function test_default_version_can_be_switched_with_the_column_toggle(): void
+    {
+        $this->actingAs($this->adminUser());
+        $configs = app(ConfigService::class);
+
+        $node = Node::factory()->create(['name' => 'node-toggle']);
+        $v1 = $configs->publish($node, "listen: :443\n");
+        $v2 = $configs->publish($node, "listen: :8443\n");
+
+        $this->assertTrue($v2->refresh()->is_current);
+
+        Livewire::test(ConfigVersions::class)
+            ->assertTableColumnExists('is_current')
+            ->call('updateTableColumnState', 'is_current', (string) $v1->getKey(), true)
+            ->assertHasNoErrors();
+
+        $this->assertTrue($v1->refresh()->is_current);
+        $this->assertFalse($v2->refresh()->is_current);
+        $this->assertSame($v1->version, $configs->latest($node)?->version);
+    }
+
+    public function test_list_shows_publish_and_modified_time_columns(): void
+    {
+        $this->actingAs($this->adminUser());
+
+        $node = Node::factory()->create(['name' => 'node-time']);
+        $config = app(ConfigService::class)->publish($node, "listen: :443\n");
+
+        // 就地改一次，修改时间与创建时间才会分得开
+        app(ConfigService::class)->updateContent($config, "listen: :443\n# touched\n");
+
+        Livewire::test(ConfigVersions::class)
+            ->assertTableColumnExists('published_at')
+            ->assertTableColumnExists('updated_at')
+            ->assertTableColumnExists('created_at')
+            ->assertCanSeeTableRecords([$config->refresh()]);
+
+        // 真实 HTTP 渲染里也要能看到「修改时间」这一列
+        $response = $this->get('/admin/config-versions');
+        $response->assertOk();
+        $this->assertStringContainsString('修改时间', $response->getContent());
+        $this->assertStringContainsString('创建版本', $response->getContent());
+        $this->assertStringContainsString('默认版本', $response->getContent());
+    }
 }

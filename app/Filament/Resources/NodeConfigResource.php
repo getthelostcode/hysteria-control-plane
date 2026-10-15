@@ -71,14 +71,39 @@ class NodeConfigResource extends Resource
             ->defaultSort('id', 'desc')
             ->columns([
                 Tables\Columns\TextColumn::make('node.name')->label('节点')->searchable()->sortable(),
-                Tables\Columns\IconColumn::make('is_current')
-                    ->label('默认下发')
-                    ->boolean()
-                    ->trueIcon('heroicon-o-check-circle')
-                    ->falseIcon('heroicon-o-minus-small')
-                    ->trueColor('success')
-                    ->falseColor('gray')
-                    ->tooltip('节点会更新到这一版（可在行操作里改）')
+                Tables\Columns\TextColumn::make('created_at')->label('创建时间')->since()->sortable()->toggleable(isToggledHiddenByDefault: true)
+                    ->tooltip(fn (NodeConfig $record): ?string => $record->created_at?->toDateTimeString()),
+                // 默认版本：直接在这里点开关切换（走 ConfigService，节点下次同步即取走）
+                Tables\Columns\ToggleColumn::make('is_current')
+                    ->label('默认版本')
+                    ->onIcon('heroicon-m-check-circle')
+                    ->offIcon('heroicon-m-minus-small')
+                    ->onColor('success')
+                    ->offColor('gray')
+                    ->tooltip('打开 = 设为该节点的默认下发版本（节点会更新到这一版）')
+                    ->disabled(fn (): bool => ! (Auth::user()?->can('publish configs') ?? false))
+                    ->updateStateUsing(function (NodeConfig $record, mixed $state): mixed {
+                        if (! $state) {
+                            // 一台节点必须有且只有一版默认下发：关掉只能是切换，不能清空
+                            Notification::make()
+                                ->title('每台节点必须有且只有一版默认下发')
+                                ->body('想换版本就直接打开目标那一版（或用行操作「设为默认下发」）。')
+                                ->warning()
+                                ->send();
+
+                            return true;
+                        }
+
+                        app(ConfigService::class)->setCurrent($record->node, $record->version, Auth::user(), '面板切换默认版本');
+
+                        Notification::make()
+                            ->title('已把 v' . $record->version . ' 设为默认下发')
+                            ->body('节点 ' . ($record->node?->name ?? '-') . ' 下一次同步/轮询即取走')
+                            ->success()
+                            ->send();
+
+                        return true;
+                    })
                     ->sortable(),
                 Tables\Columns\TextColumn::make('version')->label('版本')->badge()->color('info')->sortable(),
                 Tables\Columns\TextColumn::make('sha256')
@@ -97,8 +122,12 @@ class NodeConfigResource extends Resource
                         default => 'info',
                     }),
                 Tables\Columns\TextColumn::make('publisher.name')->label('发布人')->placeholder('-'),
-                Tables\Columns\TextColumn::make('published_at')->label('发布时间')->since()->sortable(),
-                Tables\Columns\TextColumn::make('applied_at')->label('生效时间')->since()->placeholder('-'),
+                Tables\Columns\TextColumn::make('published_at')->label('发布时间')->since()->sortable()
+                    ->tooltip(fn (NodeConfig $record): ?string => $record->published_at?->toDateTimeString()),
+                Tables\Columns\TextColumn::make('updated_at')->label('修改时间')->since()->sortable()
+                    ->tooltip(fn (NodeConfig $record): ?string => $record->updated_at?->toDateTimeString()),
+                Tables\Columns\TextColumn::make('applied_at')->label('生效时间')->since()->placeholder('-')
+                    ->tooltip(fn (NodeConfig $record): ?string => $record->applied_at?->toDateTimeString()),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')

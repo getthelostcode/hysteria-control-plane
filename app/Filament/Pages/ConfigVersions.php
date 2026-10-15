@@ -7,10 +7,15 @@ namespace App\Filament\Pages;
 use App\Filament\Resources\NodeConfigResource;
 use App\Models\Node;
 use App\Models\NodeConfig;
+use App\Services\ConfigService;
+use App\Support\HysteriaConfigBuilder;
 use Filament\Actions\Concerns\InteractsWithActions;
 use Filament\Actions\Contracts\HasActions;
+use Filament\Actions;
+use Filament\Forms;
 use Filament\Forms\Concerns\InteractsWithForms;
 use Filament\Forms\Contracts\HasForms;
+use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Tables;
 use Filament\Tables\Concerns\InteractsWithTable;
@@ -49,6 +54,63 @@ class ConfigVersions extends Page implements HasActions, HasForms, HasTable
     public static function canAccess(): bool
     {
         return auth()->user()?->can('view nodes') ?? false;
+    }
+
+    /**
+     * 页面右上角「创建版本」：选节点 → 填正文（留空用面板模板）→ 是否设为默认下发。
+     *
+     * 放在页面级（而不是表格级）：它就是「版本管理」这个页面的主操作。
+     */
+    protected function getHeaderActions(): array
+    {
+        return [
+        Actions\Action::make('create_version')
+            ->label('创建版本')
+            ->icon('heroicon-o-plus')
+            ->visible(fn (): bool => auth()->user()?->can('publish configs') ?? false)
+            ->modalHeading('创建配置版本')
+            ->modalDescription('选节点 → 填正文（留空则用面板模板渲染）→ 是否设为默认下发。新版本会写审计与历史。')
+            ->form([
+                Forms\Components\Select::make('node_id')
+                    ->label('节点')
+                    ->options(fn (): array => Node::query()->orderBy('name')->pluck('name', 'id')->all())
+                    ->searchable()
+                    ->required(),
+                Forms\Components\Textarea::make('content_yaml')
+                    ->label('配置正文（YAML，留空用面板模板）')
+                    ->rows(18)
+                    ->extraInputAttributes(['style' => 'font-family: ui-monospace, monospace; font-size: 12px;']),
+                Forms\Components\Toggle::make('make_current')
+                    ->label('设为默认下发版本')
+                    ->helperText('打开后节点会更新到这一版；关掉则只入历史（草稿）。')
+                    ->default(true),
+                Forms\Components\TextInput::make('reason')->label('变更原因')->maxLength(500),
+            ])
+            ->action(function (array $data, ConfigService $configs): void {
+                $node = Node::query()->findOrFail($data['node_id']);
+
+                $yaml = trim((string) ($data['content_yaml'] ?? ''));
+                if ($yaml === '') {
+                    $yaml = HysteriaConfigBuilder::render($node);
+                }
+
+                $config = $configs->publish(
+                    $node,
+                    $yaml,
+                    auth()->user(),
+                    (string) ($data['reason'] ?? ''),
+                    ['channel' => 'filament'],
+                    (bool) ($data['make_current'] ?? true),
+                );
+
+                Notification::make()
+                    ->title('已创建 v' . $config->version . '（' . $node->name . '）')
+                    ->body(($config->is_current ? '已设为默认下发' : '仅入历史（未设为默认）') . ' · sha256 ' . $config->shortHash())
+                    ->success()
+                    ->send();
+            }),
+        
+        ];
     }
 
     public function getSubheading(): ?string

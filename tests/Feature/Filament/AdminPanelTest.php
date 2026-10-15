@@ -153,4 +153,22 @@ class AdminPanelTest extends TestCase
             ->assertSee('节点总数')
             ->assertSee('3');
     }
+
+    /** 配置版本资源列表也要能真渲染（列/布局变更最容易在这一步翻车）。 */
+    public function test_node_config_resource_pages_render_over_http(): void
+    {
+        $this->actingAs($this->adminUser());
+
+        $node = Node::factory()->create(['name' => 'list-node']);
+        $config = app(\App\Services\ConfigService::class)->publish($node, "listen: :443\n");
+
+        $this->get('/admin/node-configs')
+            ->assertOk()
+            ->assertSee('默认版本')
+            ->assertSee('修改时间');
+
+        $this->get('/admin/node-configs/' . $config->getKey())
+            ->assertOk()
+            ->assertSee('编辑正文');
+    }
 }
