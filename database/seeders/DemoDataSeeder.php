@@ -8,7 +8,6 @@ use App\Models\AuditLog;
 use App\Models\EnrollToken;
 use App\Models\Node;
 use App\Models\NodeCommand;
-use App\Models\NodeConfig;
 use App\Models\UpgradePackage;
 use App\Services\ConfigService;
 use App\Support\SignatureVerifier;
@@ -17,9 +16,40 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * Demo fleet for a fresh panel.
+ *
+ * MUST stay idempotent: install.sh runs `db:seed` on every install/upgrade, so a
+ * second run has to be a no-op instead of colliding with nodes.node_id.
+ */
 class DemoDataSeeder extends Seeder
 {
+    private const DEMO_PREFIX = 'nd_demo';
+
     public function run(): void
+    {
+        $existing = Node::query()->where('node_id', 'like', self::DEMO_PREFIX . '%')->count();
+
+        if ($existing > 0) {
+            $this->command?->warn(sprintf(
+                'Demo fleet already present (%d nodes) — skipping. Run `php artisan migrate:fresh --seed` to rebuild it.',
+                $existing
+            ));
+
+            // The upgrade catalogue is safe to top up on every run.
+            $this->seedUpgradePackages();
+
+            return;
+        }
+
+        $this->seedFleet();
+        $this->seedUpgradePackages();
+        $this->seedAuditTrail();
+
+        $this->command?->info('Demo fleet created.');
+    }
+
+    private function seedFleet(): void
     {
         $regions = [
             'hk' => ['ip' => '203.0.113.10', 'tags' => ['premium', 'edge']],
@@ -35,25 +65,32 @@ class DemoDataSeeder extends Seeder
 
         foreach ($regions as $region => $profile) {
             $index = array_search($region, array_keys($regions), true);
+
             for ($i = 1; $i <= 2; $i++) {
                 [$plain, $hash, $cipher] = SignatureVerifier::issueSecret();
 
-                $node = Node::create([
-                    'name' => strtoupper($region) . '-edge-' . $i,
-                    'node_id' => 'nd_demo' . strtolower($region) . $i,
-                    'secret_hash' => $hash,
-                    'secret_ciphertext' => $cipher,
-                    'status' => $i === 1 ? Node::STATUS_ONLINE : Node::STATUS_OFFLINE,
-                    'ip' => $profile['ip'],
-                    'region' => $region,
-                    'tags' => $profile['tags'],
-                    'version' => '2.6.0',
-                    'agent_version' => '1.0.0',
-                    'meta' => ['arch' => 'amd64', 'demo_secret' => $plain],
-                    'enrolled_ip' => $profile['ip'],
-                    'enrolled_at' => $now->copy()->subDays(10 - $index),
-                    'last_seen_at' => $i === 1 ? $now->copy()->subSeconds(12) : $now->copy()->subMinutes(45),
-                ]);
+                $node = Node::query()->firstOrCreate(
+                    ['node_id' => self::DEMO_PREFIX . strtolower($region) . $i],
+                    [
+                        'name' => strtoupper($region) . '-edge-' . $i,
+                        'secret_hash' => $hash,
+                        'secret_ciphertext' => $cipher,
+                        'status' => $i === 1 ? Node::STATUS_ONLINE : Node::STATUS_OFFLINE,
+                        'ip' => $profile['ip'],
+                        'region' => $region,
+                        'tags' => $profile['tags'],
+                        'version' => '2.6.0',
+                        'agent_version' => '1.0.0',
+                        'meta' => ['arch' => 'amd64', 'demo_secret' => $plain],
+                        'enrolled_ip' => $profile['ip'],
+                        'enrolled_at' => $now->copy()->subDays(10 - $index),
+                        'last_seen_at' => $i === 1 ? $now->copy()->subSeconds(12) : $now->copy()->subMinutes(45),
+                    ]
+                );
+
+                if (! $node->wasRecentlyCreated) {
+                    continue;
+                }
 
                 $node->credentials()->create([
                     'secret_hash' => $hash,
@@ -98,10 +135,8 @@ class DemoDataSeeder extends Seeder
             DB::table('node_metrics')->insert($chunk);
         }
 
-        $online = Node::query()->where('status', Node::STATUS_ONLINE)->get();
-
-        foreach ($online as $node) {
-            NodeCommand::create([
+        foreach (Node::query()->where('status', Node::STATUS_ONLINE)->get() as $node) {
+            NodeCommand::query()->create([
                 'node_id' => $node->id,
                 'type' => NodeCommand::TYPE_RESTART,
                 'payload' => [],
@@ -112,7 +147,7 @@ class DemoDataSeeder extends Seeder
                 'result' => ['exit_code' => 0, 'message' => 'hysteria-server restarted'],
             ]);
 
-            NodeCommand::create([
+            NodeCommand::query()->create([
                 'node_id' => $node->id,
                 'type' => NodeCommand::TYPE_DIAGNOSTICS,
                 'payload' => ['include' => ['system', 'hysteria']],
@@ -120,38 +155,52 @@ class DemoDataSeeder extends Seeder
             ]);
         }
 
-        [$token, $plainToken] = EnrollToken::issue([
+        [, $plainToken] = EnrollToken::issue([
             'note' => 'demo enrollment token',
             'max_uses' => 10,
             'expires_at' => $now->copy()->addDays(30),
         ]);
 
-        UpgradePackage::query()->create([
-            'version' => '1.1.0',
-            'arch' => 'amd64',
-            'url' => 'https://github.com/getthelostcode/hysteria-agent/releases/download/v1.1.0/hysteria-agent-linux-amd64',
-            'sha256' => hash('sha256', 'demo-agent-1.1.0'),
-            'signature' => Str::random(64),
-            'channel' => UpgradePackage::CHANNEL_STABLE,
-            'rollout_percent' => 100,
-            'is_active' => true,
-            'released_at' => $now->copy()->subDays(3),
-            'notes' => 'Demo release',
-        ]);
+        $this->command?->info('Enrollment token: ' . $plainToken);
+    }
 
-        UpgradePackage::query()->create([
-            'version' => '1.2.0-beta.1',
-            'arch' => 'amd64',
-            'url' => 'https://github.com/getthelostcode/hysteria-agent/releases/download/v1.2.0-beta.1/hysteria-agent-linux-amd64',
-            'sha256' => hash('sha256', 'demo-agent-1.2.0-beta'),
-            'signature' => Str::random(64),
-            'channel' => UpgradePackage::CHANNEL_BETA,
-            'rollout_percent' => 20,
-            'is_active' => true,
-            'released_at' => $now->copy()->subDay(),
-            'notes' => 'Canary rollout at 20%',
-        ]);
+    private function seedUpgradePackages(): void
+    {
+        $packages = [
+            [
+                'version' => '1.1.0', 'arch' => 'amd64',
+                'url' => 'https://github.com/getthelostcode/hysteria-agent/releases/download/v1.1.0/hysteria-agent-linux-amd64',
+                'sha256' => hash('sha256', 'demo-agent-1.1.0'),
+                'signature' => Str::random(64),
+                'channel' => UpgradePackage::CHANNEL_STABLE,
+                'rollout_percent' => 100,
+                'is_active' => true,
+                'released_at' => now()->subDays(3),
+                'notes' => 'Demo release',
+            ],
+            [
+                'version' => '1.2.0-beta.1', 'arch' => 'amd64',
+                'url' => 'https://github.com/getthelostcode/hysteria-agent/releases/download/v1.2.0-beta.1/hysteria-agent-linux-amd64',
+                'sha256' => hash('sha256', 'demo-agent-1.2.0-beta'),
+                'signature' => Str::random(64),
+                'channel' => UpgradePackage::CHANNEL_BETA,
+                'rollout_percent' => 20,
+                'is_active' => true,
+                'released_at' => now()->subDay(),
+                'notes' => 'Canary rollout at 20%',
+            ],
+        ];
 
+        foreach ($packages as $package) {
+            UpgradePackage::query()->updateOrCreate(
+                ['version' => $package['version'], 'arch' => $package['arch'], 'channel' => $package['channel']],
+                $package,
+            );
+        }
+    }
+
+    private function seedAuditTrail(): void
+    {
         foreach ([
             ['action' => 'node.enrolled', 'target' => 'ND_DEMO', 'meta' => ['via' => 'seeder']],
             ['action' => 'config.published', 'target' => 'ND_DEMO', 'meta' => ['version' => 1]],
@@ -169,7 +218,5 @@ class DemoDataSeeder extends Seeder
                 'updated_at' => Carbon::now(),
             ]);
         }
-
-        $this->command?->info('Demo fleet created. Enrollment token: ' . $plainToken);
     }
 }
