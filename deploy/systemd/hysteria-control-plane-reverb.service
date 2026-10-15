@@ -1,0 +1,17 @@
+[Unit]
+Description=Hysteria Control Plane — WebSocket server (Reverb)
+After=network.target redis-server.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__PHP__ __APP_DIR__/artisan reverb:start --host=0.0.0.0 --port=8081
+Restart=always
+RestartSec=5
+StandardOutput=append:__APP_DIR__/storage/logs/reverb.log
+StandardError=append:__APP_DIR__/storage/logs/reverb.log
+
+[Install]
+WantedBy=multi-user.target

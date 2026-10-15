@@ -1,0 +1,17 @@
+[Unit]
+Description=Hysteria Control Plane — Laravel scheduler (offline detection, metric pruning)
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__PHP__ __APP_DIR__/artisan schedule:work
+Restart=always
+RestartSec=5
+StandardOutput=append:__APP_DIR__/storage/logs/scheduler.log
+StandardError=append:__APP_DIR__/storage/logs/scheduler.log
+
+[Install]
+WantedBy=multi-user.target

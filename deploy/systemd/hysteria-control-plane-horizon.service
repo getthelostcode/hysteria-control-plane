@@ -1,0 +1,19 @@
+[Unit]
+Description=Hysteria Control Plane — queue worker (Horizon)
+After=network.target mysql.service redis-server.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__PHP__ __APP_DIR__/artisan horizon
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=90
+StandardOutput=append:__APP_DIR__/storage/logs/horizon.log
+StandardError=append:__APP_DIR__/storage/logs/horizon.log
+
+[Install]
+WantedBy=multi-user.target
