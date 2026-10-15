@@ -52,6 +52,7 @@ class ConfigController extends Controller
             $request->user(),
             (string) ($request->validated('reason') ?? ''),
             ['channel' => 'admin-api'],
+            $request->boolean('make_current', true),
         );
 
         return response()->json([

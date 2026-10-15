@@ -57,6 +57,10 @@ class NodeConfigResource extends Resource
                 ->label('变更原因')
                 ->maxLength(500)
                 ->dehydrated(false),
+            Forms\Components\Toggle::make('make_current')
+                ->label('发布后设为默认下发版本')
+                ->helperText('节点会更新到这一版。关掉则只入历史（草稿），稍后在「版本管理」里显式指定。')
+                ->default(true),
         ]);
     }
 

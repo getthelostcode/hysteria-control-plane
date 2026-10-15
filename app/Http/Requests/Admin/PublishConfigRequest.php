@@ -21,6 +21,7 @@ class PublishConfigRequest extends FormRequest
             'reason' => ['nullable', 'string', 'max:500'],
             'overrides' => ['nullable', 'array'],
             'use_template' => ['nullable', 'boolean'],
+            'make_current' => ['nullable', 'boolean'],
         ];
     }
 }

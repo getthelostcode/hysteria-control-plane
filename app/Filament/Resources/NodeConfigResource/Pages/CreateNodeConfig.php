@@ -30,6 +30,7 @@ class CreateNodeConfig extends CreateRecord
             auth()->user(),
             (string) ($data['reason'] ?? ''),
             ['channel' => 'filament'],
+            (bool) ($data['make_current'] ?? true),
         );
 
         Notification::make()

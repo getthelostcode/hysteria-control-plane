@@ -40,11 +40,12 @@ final class ConfigService
         ?User $actor = null,
         string $reason = '',
         array $meta = [],
+        bool $makeCurrent = true,
     ): NodeConfig {
         $this->assertValidYaml($yaml);
         $meta = array_merge(['origin' => 'panel'], $meta);
 
-        return DB::transaction(function () use ($node, $yaml, $actor, $reason, $meta): NodeConfig {
+        return DB::transaction(function () use ($node, $yaml, $actor, $reason, $meta, $makeCurrent): NodeConfig {
             $previous = $this->latest($node);
             $version = ($previous?->version ?? 0) + 1;
 
@@ -54,16 +55,19 @@ final class ConfigService
                 'content_yaml' => $yaml,
                 'sha256' => hash('sha256', $yaml),
                 'status' => NodeConfig::STATUS_PUBLISHED,
-                'is_current' => true,
+                // 新版本默认就成为「默认下发」那一版；勾掉则只入历史（草稿），由运维显式指定
+                'is_current' => $makeCurrent,
                 'published_by' => $actor?->id,
                 'published_at' => now(),
             ]);
 
-            // 一台节点只能有一个「默认下发」版本
-            NodeConfig::query()
-                ->where('node_id', $node->id)
-                ->whereKeyNot($config->getKey())
-                ->update(['is_current' => false]);
+            if ($makeCurrent) {
+                // 一台节点只能有一个「默认下发」版本
+                NodeConfig::query()
+                    ->where('node_id', $node->id)
+                    ->whereKeyNot($config->getKey())
+                    ->update(['is_current' => false]);
+            }
 
             NodeConfigHistory::create([
                 'node_id' => $node->id,
@@ -79,6 +83,7 @@ final class ConfigService
                 'node_id' => $node->node_id,
                 'version' => $version,
                 'sha256' => $config->sha256,
+                'is_current' => $makeCurrent,
                 'reason' => $reason,
             ], $actor?->name);
 
