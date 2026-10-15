@@ -33,6 +33,20 @@ class NodeCommand extends Model implements AuditableContract
 
     public const TYPE_SHELL = 'exec';
 
+    // agent 原生协议（Envelope CommandType 1..11）里本面也支持的类型。
+    // 由 Go 控制面桥接转发，见 hysteria-agent/docs/BRIDGE-TO-CONTROL-PLANE.md §4。
+    public const TYPE_TAIL_LOGS = 'tail_logs';
+
+    public const TYPE_GET_STATE = 'get_state';
+
+    public const TYPE_CANCEL_TAIL = 'cancel_tail';
+
+    public const TYPE_ROLLBACK_CONFIG = 'rollback_config';
+
+    public const TYPE_SELF_RESTART = 'self_restart';
+
+    public const TYPE_CLEAR_OUTBOX = 'clear_outbox';
+
     /** @var array<string, string> */
     public const TYPES = [
         self::TYPE_RESTART => '重启 Hysteria2',
@@ -43,7 +57,27 @@ class NodeCommand extends Model implements AuditableContract
         self::TYPE_KICK_USER => '踢出用户',
         self::TYPE_TRAFFIC_RESET => '清零流量统计',
         self::TYPE_SHELL => '自定义指令',
+        self::TYPE_TAIL_LOGS => '流式日志（最长 5 分钟）',
+        self::TYPE_GET_STATE => '采集运行状态快照',
+        self::TYPE_CANCEL_TAIL => '结束日志流',
+        self::TYPE_ROLLBACK_CONFIG => '回滚节点配置',
+        self::TYPE_SELF_RESTART => '重启 Agent 进程',
+        self::TYPE_CLEAR_OUTBOX => '清空节点积压事件（危险）',
     ];
+
+    /**
+     * Types a mere operator may not issue: they either drop data on the node
+     * (clear_outbox) or run arbitrary commands (exec, rejected by the agent's
+     * own whitelist anyway).
+     *
+     * @var array<int, string>
+     */
+    public const DANGEROUS_TYPES = [self::TYPE_CLEAR_OUTBOX, self::TYPE_SHELL];
+
+    public static function isDangerousType(string $type): bool
+    {
+        return in_array($type, self::DANGEROUS_TYPES, true);
+    }
 
     public const STATUS_PENDING = 'pending';
 

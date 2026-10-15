@@ -103,6 +103,11 @@ class NodeResource extends Resource
                     ->sortable()
                     ->color(fn (Node $record): string => $record->isOnline() ? 'success' : 'danger'),
                 Tables\Columns\TextColumn::make('version')->label('Hysteria')->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('meta.protocol')
+                    ->label('通道')
+                    ->badge()
+                    ->placeholder('native')
+                    ->toggleable(),
             ])
             ->filters([
                 Tables\Filters\SelectFilter::make('status')
@@ -122,7 +127,8 @@ class NodeResource extends Resource
                     ->form([
                         Forms\Components\Select::make('type')
                             ->label('指令类型')
-                            ->options(NodeCommand::TYPES)
+                            ->options(self::commandTypeOptions())
+                            ->searchable()
                             ->default(NodeCommand::TYPE_RESTART)
                             ->required(),
                         Forms\Components\KeyValue::make('payload')->label('参数')->reorderable(),
@@ -167,7 +173,8 @@ class NodeResource extends Resource
                     ->form([
                         Forms\Components\Select::make('type')
                             ->label('指令类型')
-                            ->options(NodeCommand::TYPES)
+                            ->options(self::commandTypeOptions())
+                            ->searchable()
                             ->default(NodeCommand::TYPE_RESTART)
                             ->required(),
                     ])
@@ -182,6 +189,23 @@ class NodeResource extends Resource
                     ->deselectRecordsAfterCompletion(),
                 Tables\Actions\DeleteBulkAction::make(),
             ]);
+    }
+
+    /**
+     * Command types for the panel dropdown: types a non-manager may not issue
+     * are labelled so nobody wastes a click (the API/service still enforces it).
+     *
+     * @return array<string, string>
+     */
+    public static function commandTypeOptions(): array
+    {
+        $isManager = Auth::user()?->hasAnyRole(['super-admin', 'admin']) ?? false;
+
+        return collect(NodeCommand::TYPES)
+            ->map(static fn (string $label, string $type): string => NodeCommand::isDangerousType($type) && ! $isManager
+                ? $label . ' · 仅管理员'
+                : $label)
+            ->all();
     }
 
     public static function getPages(): array

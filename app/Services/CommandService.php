@@ -10,6 +10,7 @@ use App\Models\Node;
 use App\Models\NodeCommand;
 use App\Models\User;
 use App\Support\AuditLogger;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Collection;
 
 final class CommandService
@@ -17,6 +18,12 @@ final class CommandService
     /** @param array<string, mixed> $payload */
     public function issue(Node $node, string $type, array $payload = [], ?User $actor = null): NodeCommand
     {
+        // Single choke point for every caller (panel action, admin API, bridge).
+        if (NodeCommand::isDangerousType($type)
+            && ! ($actor?->hasAnyRole(['super-admin', 'admin']) ?? false)) {
+            throw new AuthorizationException('指令 ' . $type . ' 仅管理员（admin/super-admin）可下发。');
+        }
+
         $command = NodeCommand::create([
             'node_id' => $node->id,
             'type' => $type,

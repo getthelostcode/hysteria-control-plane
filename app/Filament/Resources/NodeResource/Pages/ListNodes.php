@@ -38,7 +38,7 @@ class ListNodes extends ListRecords
                 ->form([
                     Forms\Components\Select::make('type')
                         ->label('指令类型')
-                        ->options(NodeCommand::TYPES)
+                        ->options(NodeResource::commandTypeOptions())
                         ->default(NodeCommand::TYPE_RELOAD)
                         ->required(),
                 ])

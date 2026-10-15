@@ -39,7 +39,7 @@ class ViewNode extends ViewRecord
                 ->form([
                     Forms\Components\Select::make('type')
                         ->label('指令类型')
-                        ->options(NodeCommand::TYPES)
+                        ->options(NodeResource::commandTypeOptions())
                         ->default(NodeCommand::TYPE_RESTART)
                         ->required(),
                     Forms\Components\KeyValue::make('payload')->label('参数'),
