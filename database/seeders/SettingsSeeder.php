@@ -23,7 +23,11 @@ class SettingsSeeder extends Seeder
         $settings->metrics_retention_days = 30;
         $settings->node_domain = 'node.example.com';
         $settings->panel_footer = 'Hysteria2 Control Plane';
-        $settings->default_config_template = HysteriaConfigBuilder::DEFAULT_TEMPLATE;
+        // 留空 = 用 HysteriaConfigBuilder::DEFAULT_TEMPLATE。
+        // 曾经这里把内置模板**钉**进设置表：模板后来改了（auth 从 userpass 换成 http），
+        // 已有部署却因为库里那份旧副本而继续用旧模板，且面板上看着像是"已配置"，
+        // 排查成本极高。需要自定义模板时由运维在面板里显式填写。
+        $settings->default_config_template = '';
         $settings->save();
 
         $this->command?->info('Panel settings written.');

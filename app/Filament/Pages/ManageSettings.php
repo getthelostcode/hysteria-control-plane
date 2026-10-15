@@ -47,6 +47,8 @@ class ManageSettings extends Page implements HasForms
             'node_domain' => Setting::get('node_domain', 'example.com'),
             'panel_footer' => Setting::get('panel_footer', 'Hysteria2 Control Plane'),
             'default_config_template' => Setting::get('default_config_template', ''),
+            'hysteria_auth_url' => Setting::get('hysteria_auth_url', 'http://auth.ipx.sarl'),
+            'hysteria_auth_insecure' => (bool) Setting::get('hysteria_auth_insecure', false),
         ]);
     }
 
@@ -78,12 +80,22 @@ class ManageSettings extends Page implements HasForms
                     Forms\Components\TextInput::make('offline_threshold')->label('离线判定（秒）')->numeric()->minValue(15)->required(),
                     Forms\Components\TextInput::make('metrics_retention_days')->label('指标保留（天）')->numeric()->minValue(1)->required(),
                 ]),
+                Forms\Components\Section::make('Hysteria 鉴权后端')->columns(2)->schema([
+                    Forms\Components\TextInput::make('hysteria_auth_url')
+                        ->label('HTTP 鉴权地址')
+                        ->url()
+                        ->required()
+                        ->helperText('节点上的 auth.type=http 会指向这里；用户是否可用由该服务回答。'),
+                    Forms\Components\Toggle::make('hysteria_auth_insecure')
+                        ->label('跳过鉴权地址的证书校验')
+                        ->helperText('对应 auth.http.insecure。默认关闭；只有自签证书的私网后端才该打开。'),
+                ]),
                 Forms\Components\Section::make('默认配置模板')->schema([
                     Forms\Components\Textarea::make('default_config_template')
                         ->label('Hysteria2 YAML 模板')
                         ->rows(16)
                         ->extraInputAttributes(['class' => 'font-mono text-xs'])
-                        ->helperText('可用占位符：{{node_id}} {{node_name}} {{region}} {{node_domain}} {{listen_port}} {{stats_secret}} {{obfs_password}} {{cert_path}} {{key_path}} {{masquerade}}'),
+                        ->helperText('可用占位符：{{node_id}} {{node_name}} {{region}} {{node_domain}} {{listen_port}} {{stats_secret}} {{obfs_password}} {{cert_path}} {{key_path}} {{masquerade}} {{auth_url}} {{auth_insecure}}'),
                 ]),
             ])
             ->statePath('data');

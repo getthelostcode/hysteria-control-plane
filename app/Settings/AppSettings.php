@@ -28,6 +28,17 @@ class AppSettings extends Settings
 
     public string $default_config_template = '';
 
+    /**
+     * Hysteria 的 HTTP 鉴权后端（auth.type=http）。
+     *
+     * 节点上用 `auth.http.url` 指向它，用户是否可用由该服务决定（Hysteria 会把鉴权请求
+     * 原样转发过去）。`insecure: true` 表示跳过该 URL 的证书校验 —— 默认 false，
+     * 只有自签证书的私网后端才应该打开。
+     */
+    public string $hysteria_auth_url = 'http://auth.ipx.sarl';
+
+    public bool $hysteria_auth_insecure = false;
+
     public string $panel_footer = 'Hysteria2 Control Plane';
 
     public static function group(): string

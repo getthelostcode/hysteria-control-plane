@@ -122,7 +122,9 @@ class DemoDataSeeder extends Seeder
                 if ($i === 1) {
                     app(ConfigService::class)->publish(
                         $node,
-                        "listen: :443\ntls:\n  cert: /etc/hysteria/cert.pem\n  key: /etc/hysteria/key.pem\ntrafficStats:\n  listen: 127.0.0.1:9999\n  secret: {$node->statsSecret()}\n",
+                        "listen: :443\ntls:\n  cert: /etc/hysteria/cert.pem\n  key: /etc/hysteria/key.pem\n"
+                        . "auth:\n  type: http\n  http:\n    url: http://auth.ipx.sarl\n    insecure: false\n"
+                        . "trafficStats:\n  listen: 127.0.0.1:9999\n  secret: {$node->statsSecret()}\n",
                         null,
                         'seed: initial rollout',
                         ['channel' => 'seeder'],
