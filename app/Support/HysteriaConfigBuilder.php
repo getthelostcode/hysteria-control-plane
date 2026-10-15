@@ -12,7 +12,7 @@ use Symfony\Component\Yaml\Yaml;
  *
  * The template is plain YAML in which the placeholders below are substituted.
  * {{node_id}} {{node_name}} {{region}} {{node_domain}} {{listen_port}}
- * {{stats_secret}} {{obfs_password}} {{cert_path}} {{key_path}} {{masquerade}}
+ * {{stats_secret}} {{stats_listen}} {{obfs_password}} {{cert_path}} {{key_path}} {{masquerade}}
  * {{auth_url}} {{auth_insecure}}（auth.type=http 用；insecure 只是跳过该 URL 的证书校验。）
  * 默认用 https：鉴权请求带用户凭据，明文 http 不允许作为默认值。
  */
@@ -37,7 +37,7 @@ final class HysteriaConfigBuilder
         insecure: {{auth_insecure}}
 
     trafficStats:
-      listen: 127.0.0.1:9999
+      listen: {{stats_listen}}
       secret: {{stats_secret}}
 
     masquerade:
@@ -80,9 +80,10 @@ final class HysteriaConfigBuilder
             '{{node_domain}}' => (string) Setting::get('node_domain', 'example.com'),
             '{{listen_port}}' => '443',
             '{{stats_secret}}' => $node->statsSecret(),
+            '{{stats_listen}}' => $node->statsListen(),
             '{{obfs_password}}' => $node->obfsPassword(),
-            '{{cert_path}}' => '/etc/hysteria/cert.pem',
-            '{{key_path}}' => '/etc/hysteria/key.pem',
+            '{{cert_path}}' => $node->certPath(),
+            '{{key_path}}' => $node->keyPath(),
             '{{masquerade}}' => '/var/www/hysteria',
         ], $context);
 

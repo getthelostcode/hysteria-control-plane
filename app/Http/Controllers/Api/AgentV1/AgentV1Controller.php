@@ -123,6 +123,34 @@ class AgentV1Controller extends Controller
      * `?key=` form is accepted for manual probes.
      */
     /**
+     * 把节点自报的 trafficStats 值记进 meta（面板渲染配置时用节点真实值）。
+     *
+     * 只有真的变了才写库：每次心跳都 save 会打破「存活写库按节点 15s 门控」的取舍，
+     * 5000 节点规模下就是每 30 秒一次全表写。
+     *
+     * @param  array<string, string>  $reported
+     */
+    private function adoptReportedStats(\App\Models\Node $node, array $reported): void
+    {
+        $meta = $node->meta ?? [];
+        $changed = false;
+
+        foreach ($reported as $key => $value) {
+            if (($meta[$key] ?? null) !== $value) {
+                $meta[$key] = $value;
+                $changed = true;
+            }
+        }
+
+        if (! $changed) {
+            return;
+        }
+
+        $meta['stats_reported_at'] = now()->toIso8601String();
+        $node->forceFill(['meta' => $meta])->saveQuietly();
+    }
+
+    /**
      * 配置下发（REST 兜底通道）。
      *
      * 本控制面终结不了二进制 WS 控制通道（/control 返回 501），所以直接连控制面的节点
@@ -227,6 +255,20 @@ class AgentV1Controller extends Controller
             'agent_version' => $request->input('agent_version'),
             'version' => $request->input('hysteria_version'),
         ], static fn ($value) => $value !== null && $value !== ''));
+
+        // 收养节点自报的 trafficStats 值。
+        //
+        // 为什么必须收养：agent 会校验「下发的 trafficStats.secret == 本机 hysteria.api_secret」，
+        // 不一致就**整份拒绝**（否则读不到流量、踢不了人）。面板若写死/写错，配置永远发布不成功
+        // —— jp8 上连发四个版本全 failed 就是这么来的。用节点自己的值渲染就没这问题。
+        $reported = array_filter([
+            'stats_secret' => trim((string) $request->input('traffic_stats_secret', '')),
+            'stats_listen' => trim((string) $request->input('traffic_stats_listen', '')),
+        ], static fn ($value) => $value !== '');
+
+        if ($reported !== []) {
+            $this->adoptReportedStats($node, $reported);
+        }
 
         $latest = $this->configs->latest($node);
 

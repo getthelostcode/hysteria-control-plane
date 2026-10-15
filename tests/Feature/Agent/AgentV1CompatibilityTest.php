@@ -387,4 +387,59 @@ class AgentV1CompatibilityTest extends TestCase
         $this->postJson('/api/v1/agent/config/ack', ['version' => 1, 'status' => 'applied'])
             ->assertStatus(401)->assertJsonPath('error', 'unauthorized');
     }
+
+    /** 节点上报的现状（证书路径 / trafficStats）必须被收养：面板写死错值会让 agent 整份拒收配置。 */
+    public function test_heartbeat_adopts_reported_hysteria_shape(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'shape-1', 'machine_id' => 'machine-shape-1',
+        ]))->assertOk();
+
+        $node = \App\Models\Node::query()->where('node_id', $enrolled->json('node_id'))->firstOrFail();
+        $jwt = Jwt::encode(['sub' => $node->node_id, 'exp' => now()->addHour()->getTimestamp()], $node->plainSecret());
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->postJson('/api/v1/agent/heartbeat', [
+                'agent_version' => '0.1.0',
+                'cert_path' => '/etc/hysteria/cert.pem',
+                'key_path' => '/etc/hysteria/key.pem',
+                'traffic_stats_listen' => '127.0.0.1:9999',
+                'traffic_stats_secret' => 'node-side-secret',
+            ])
+            ->assertOk();
+
+        $node->refresh();
+        $this->assertSame('/etc/hysteria/cert.pem', $node->certPath());
+        $this->assertSame('/etc/hysteria/key.pem', $node->keyPath());
+        $this->assertSame('127.0.0.1:9999', $node->statsListen());
+        $this->assertSame('node-side-secret', $node->statsSecret());
+
+        // 面板渲染配置时要照抄这些值（而不是写死一个节点上不存在的路径）
+        $rendered = \App\Support\HysteriaConfigBuilder::render($node);
+        $this->assertStringContainsString('cert: /etc/hysteria/cert.pem', $rendered);
+        // Yaml::dump 会给含冒号的纯量加引号（listen: '127.0.0.1:9999'），只断言值本身
+        $this->assertStringContainsString('127.0.0.1:9999', $rendered);
+        $this->assertStringContainsString('node-side-secret', $rendered);
+    }
+
+    /** 没上报时不该凭空塞 meta（每次心跳都写库会打破 15s 门控与 5000 节点规模验收）。 */
+    public function test_heartbeat_without_shape_fields_does_not_touch_meta(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'shape-2', 'machine_id' => 'machine-shape-2',
+        ]))->assertOk();
+
+        $node = \App\Models\Node::query()->where('node_id', $enrolled->json('node_id'))->firstOrFail();
+        $jwt = Jwt::encode(['sub' => $node->node_id, 'exp' => now()->addHour()->getTimestamp()], $node->plainSecret());
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->postJson('/api/v1/agent/heartbeat', ['agent_version' => '0.1.0'])
+            ->assertOk();
+
+        $meta = $node->refresh()->meta ?? [];
+        $this->assertArrayNotHasKey('stats_secret', $meta);
+        $this->assertArrayNotHasKey('cert_path', $meta);
+    }
 }

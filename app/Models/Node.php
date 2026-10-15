@@ -216,6 +216,53 @@ class Node extends Model implements AuditableContract
      * 而 agent 会硬性校验「配置里的 trafficStats.secret == 自己配置里的 hysteria.api_secret」，
      * 不一致就直接拒绝整份配置。所以允许用 `meta.stats_secret` 覆盖成节点上真实的值。
      */
+    /** 证书路径：优先用节点自报的真实路径（agent 心跳会上报），否则用设置/默认。 */
+    public function certPath(): string
+    {
+        return $this->reportedPath('cert_path', 'hysteria_cert_path', '/etc/hysteria/cert.pem');
+    }
+
+    /** 私钥路径：同上。 */
+    public function keyPath(): string
+    {
+        return $this->reportedPath('key_path', 'hysteria_key_path', '/etc/hysteria/key.pem');
+    }
+
+    /**
+     * 取一个「节点自报优先」的路径类配置。
+     *
+     * 面板不知道节点上的证书放在哪 —— 写死一个路径，节点上不存在时 agent 会拒收整份配置
+     * （jp8 连发四版全 failed 的原因之一）。让 agent 上报现有路径，面板照抄就不会错。
+     */
+    private function reportedPath(string $metaKey, string $settingKey, string $default): string
+    {
+        $reported = $this->meta[$metaKey] ?? null;
+
+        if (is_string($reported) && trim($reported) !== '') {
+            return trim($reported);
+        }
+
+        $configured = \App\Support\Setting::get($settingKey, '');
+
+        if (is_string($configured) && trim($configured) !== '') {
+            return trim($configured);
+        }
+
+        return $default;
+    }
+
+    /** 节点上报的 trafficStats.listen（面板渲染配置用；没有就用默认）。 */
+    public function statsListen(): string
+    {
+        $override = $this->meta['stats_listen'] ?? null;
+
+        if (is_string($override) && trim($override) !== '') {
+            return trim($override);
+        }
+
+        return (string) \App\Support\Setting::get('hysteria_stats_listen', '127.0.0.1:8080');
+    }
+
     public function statsSecret(): string
     {
         $override = $this->meta['stats_secret'] ?? null;
