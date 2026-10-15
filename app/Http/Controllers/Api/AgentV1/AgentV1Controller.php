@@ -264,6 +264,9 @@ class AgentV1Controller extends Controller
         $reported = array_filter([
             'stats_secret' => trim((string) $request->input('traffic_stats_secret', '')),
             'stats_listen' => trim((string) $request->input('traffic_stats_listen', '')),
+            // 证书路径也照抄：面板写死的路径在节点上不存在时 agent 会整份拒收（jp8 现场）
+            'cert_path' => trim((string) $request->input('cert_path', '')),
+            'key_path' => trim((string) $request->input('key_path', '')),
         ], static fn ($value) => $value !== '');
 
         if ($reported !== []) {

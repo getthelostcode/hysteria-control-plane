@@ -410,6 +410,9 @@ class AgentV1CompatibilityTest extends TestCase
             ->assertOk();
 
         $node->refresh();
+        $meta = $node->refresh()->meta ?? [];
+        $this->assertSame('/etc/hysteria/cert.pem', $meta['cert_path'] ?? null, '证书路径必须被收养');
+        $this->assertSame('/etc/hysteria/key.pem', $meta['key_path'] ?? null, '私钥路径必须被收养');
         $this->assertSame('/etc/hysteria/cert.pem', $node->certPath());
         $this->assertSame('/etc/hysteria/key.pem', $node->keyPath());
         $this->assertSame('127.0.0.1:9999', $node->statsListen());
