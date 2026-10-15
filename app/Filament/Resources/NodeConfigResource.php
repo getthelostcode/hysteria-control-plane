@@ -109,6 +109,38 @@ class NodeConfigResource extends Resource
             ->sortable();
     }
 
+    /** 版本列（带链接）：点进去就是详情页（改正文 / 回滚 / 对比都在那里）。 */
+    public static function linkedVersionColumn(): Tables\Columns\TextColumn
+    {
+        return self::versionColumn()
+            ->url(fn (NodeConfig $record): string => self::getUrl('view', ['record' => $record]))
+            ->tooltip('点开查看 / 编辑正文、回滚、对比');
+    }
+
+    /** 「设为默认下发」行操作（版本管理页与资源列表共用）。 */
+    public static function activateAction(): Tables\Actions\Action
+    {
+        return Tables\Actions\Action::make('activate')
+            ->label('设为默认下发')
+            ->icon('heroicon-o-arrow-path-rounded-square')
+            ->color('success')
+            ->visible(fn (NodeConfig $record): bool => (! $record->is_current)
+                && (Auth::user()?->hasAnyRole(['super-admin', 'admin', 'operator']) ?? false))
+            ->requiresConfirmation()
+            ->modalDescription('把这一版设为该节点默认下发的版本：节点下一次同步/轮询就会取走它的内容。')
+            ->form([
+                Forms\Components\TextInput::make('reason')->label('原因')->default('指定下发版本'),
+            ])
+            ->action(function (NodeConfig $record, array $data, ConfigService $configs): void {
+                $current = $configs->setCurrent($record->node, $record->version, Auth::user(), (string) ($data['reason'] ?? ''));
+
+                Notification::make()
+                    ->title('v' . $current->version . ' 已设为默认下发')
+                    ->success()
+                    ->send();
+            });
+    }
+
     public static function versionColumn(): Tables\Columns\TextColumn
     {
         return Tables\Columns\TextColumn::make('version')
@@ -233,45 +265,7 @@ class NodeConfigResource extends Resource
                             ->success()
                             ->send();
                     }),
-                Tables\Actions\Action::make('activate')
-                    ->label('设为默认下发')
-                    ->icon('heroicon-o-arrow-path-rounded-square')
-                    ->color('success')
-                    ->visible(fn (NodeConfig $record): bool => (! $record->is_current)
-                        && (Auth::user()?->hasAnyRole(['super-admin', 'admin', 'operator']) ?? false))
-                    ->requiresConfirmation()
-                    ->modalDescription('把这一版设为该节点默认下发的版本：节点下一次同步/轮询就会取走它的内容（不新生成版本）。')
-                    ->form([
-                        Forms\Components\TextInput::make('reason')->label('原因')->default('指定下发版本'),
-                    ])
-                    ->action(function (NodeConfig $record, array $data, ConfigService $configs): void {
-                        $current = $configs->setCurrent($record->node, $record->version, Auth::user(), (string) ($data['reason'] ?? ''));
-
-                        Notification::make()
-                            ->title('v' . $current->version . ' 已设为默认下发')
-                            ->body('节点下次同步即生效')
-                            ->success()
-                            ->send();
-                    }),
-                Tables\Actions\Action::make('rollback')
-                    ->label('回滚到此版本')
-                    ->icon('heroicon-o-arrow-uturn-left')
-                    ->color('warning')
-                    ->requiresConfirmation()
-                    ->modalDescription('将基于此版本内容生成一个新的配置版本并下发给节点。')
-                    ->visible(fn (): bool => Auth::user()?->hasAnyRole(['super-admin', 'admin', 'operator']) ?? false)
-                    ->form([
-                        Forms\Components\TextInput::make('reason')->label('回滚原因')->default('manual rollback'),
-                    ])
-                    ->action(function (NodeConfig $record, array $data, ConfigService $configs): void {
-                        $new = $configs->rollback($record->node, $record->version, Auth::user(), (string) ($data['reason'] ?? ''));
-
-                        Notification::make()
-                            ->title('已回滚，新版本 v' . $new->version)
-                            ->body('内容取自 v' . $record->version . ' · sha256 ' . $new->shortHash())
-                            ->success()
-                            ->send();
-                    }),
+                self::activateAction(),
                 Tables\Actions\Action::make('diff')
                     ->label('对比')
                     ->icon('heroicon-o-code-bracket-square')
