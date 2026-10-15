@@ -104,4 +104,22 @@ class ConfigVersionsPageTest extends TestCase
         $this->assertFalse($v2->refresh()->is_current, '不勾「设为默认下发」时不该顶掉当前版本');
         $this->assertSame($v1->version, $configs->latest($node)?->version);
     }
+
+    /**
+     * 走真实 HTTP（真实布局）：Livewire::test 不走页面布局，布局出错它抓不到 ——
+     * 部署到生产就变成 500「Livewire page component layout view not found」。
+     */
+    public function test_page_renders_over_http_with_the_panel_layout(): void
+    {
+        $this->actingAs($this->adminUser());
+
+        $node = Node::factory()->create(['name' => 'http-node']);
+        app(ConfigService::class)->publish($node, "listen: :443\n");
+
+        $response = $this->get('/admin/config-versions');
+
+        $response->assertOk();
+        $this->assertStringContainsString('配置版本管理', $response->getContent());
+        $this->assertStringContainsString('http-node', $response->getContent());
+    }
 }

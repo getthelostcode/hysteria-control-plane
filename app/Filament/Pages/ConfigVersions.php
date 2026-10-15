@@ -16,8 +16,6 @@ use Filament\Tables;
 use Filament\Tables\Concerns\InteractsWithTable;
 use Filament\Tables\Contracts\HasTable;
 use Filament\Tables\Table;
-use Illuminate\Contracts\View\View;
-use Illuminate\Database\Eloquent\Builder;
 
 /**
  * 「配置管理 → 版本管理」：所有节点、所有配置版本的总表。
@@ -100,10 +98,5 @@ class ConfigVersions extends Page implements HasActions, HasForms, HasTable
                     ->falseLabel('只看非默认版本'),
             ])
             ->headerActions([]);
-    }
-
-    public function render(): View
-    {
-        return view(static::$view);
     }
 }
