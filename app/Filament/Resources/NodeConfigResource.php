@@ -6,6 +6,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\NodeConfigResource\Pages;
 use App\Models\Node;
+use App\Models\ConfigFile;
 use App\Models\NodeConfig;
 use App\Services\ConfigService;
 use App\Support\YamlDiff;
@@ -48,6 +49,23 @@ class NodeConfigResource extends Resource
                 ->required()
                 ->visibleOn('create')
                 ->dehydrated(false),
+            Forms\Components\Select::make('config_file_id')
+                ->label('从版本文件载入')
+                ->options(fn (): array => ConfigFile::query()->orderByDesc('version')->get()
+                    ->mapWithKeys(fn (ConfigFile $file): array => [
+                        $file->id => $file->label() . ($file->is_default ? '（默认版本）' : '') . ($file->note !== '' ? ' · ' . $file->note : ''),
+                    ])->all())
+                ->live()
+                ->afterStateUpdated(function (mixed $state, Forms\Set $set): void {
+                    $file = ConfigFile::query()->find($state);
+
+                    if ($file !== null) {
+                        $set('content_yaml', $file->content_yaml);
+                    }
+                })
+                ->dehydrated(false)
+                ->visibleOn('create')
+                ->helperText('选一份「配置版本文件」会把正文填进来，仍可继续编辑。'),
             Forms\Components\Textarea::make('content_yaml')
                 ->label('Hysteria2 配置 (YAML)')
                 ->rows(20)
