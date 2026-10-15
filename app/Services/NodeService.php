@@ -50,6 +50,8 @@ final class NodeService
                     'enrolled_via' => 'api',
                     // 地址来源：agent=节点自报公网 IP / proxy=代理链推导 / peer=只看到对端
                     'ip_source' => $public['source'],
+                    // 只展示 IPv4，但 IPv6 出口也留档（排障/防火墙用得上）
+                    'ip_v6' => $public['ip_v6'],
                 ],
                 // 观测到的对端地址单独留档：它可能是 cloudflared 的 127.0.0.1，
                 // 排障时能区分「节点换了 IP」和「请求没经过代理链」。
@@ -98,18 +100,29 @@ final class NodeService
             'agent_version' => $attributes['agent_version'] ?? null,
         ], static fn ($value) => $value !== null));
 
-        // 地址来源优先级：agent 自报公网（NAT/桥接下唯一可靠）> 代理链推导（中间件传入）。
-        // 注意：agent 若上报私网/回环地址（内网部署很常见），**不能**覆盖已有的公网地址。
+        // 地址：agent 自报（心跳里的 public_ip/ip）优先于代理链推导（中间件传 observed_ip），
+        // 且 **IPv4 优先**；私网/回环地址（内网部署常见）不得覆盖已有的公网地址。
         $reportedIp = $attributes['public_ip'] ?? $attributes['ip'] ?? null;
+        $observedIp = $attributes['observed_ip'] ?? null;
 
-        if (PublicIp::isPublic($reportedIp)) {
-            $node->ip = $reportedIp;
+        if ($reportedIp !== null || $observedIp !== null) {
+            $public = PublicIp::resolve($reportedIp, $observedIp);
 
-            if (($node->meta['ip_source'] ?? null) !== 'agent') {
-                $node->meta = array_merge($node->meta ?? [], ['ip_source' => 'agent']);
+            // 已有 IPv4 不被新的 IPv6 顶掉：面板按 IPv4 展示，双栈节点在 v4/v6 出口之间
+            // 来回切换时列表不应跳变。确实是 v4 没了（节点搬走），运维可在面板手工修正。
+            if (! PublicIp::isIpv4($public['ip']) && PublicIp::isIpv4($node->ip)) {
+                $public['ip'] = $node->ip;
+                $public['source'] = (string) ($node->meta['ip_source'] ?? 'peer');
+                $public['ip_v6'] = $public['ip_v6'] ?? $reportedIp;
             }
-        } elseif (isset($attributes['ip']) && $node->ip === null) {
-            $node->ip = $attributes['ip'];
+
+            if ($public['ip'] !== null) {
+                $node->ip = $public['ip'];
+                $node->meta = array_merge($node->meta ?? [], array_filter([
+                    'ip_source' => $public['source'],
+                    'ip_v6' => $public['ip_v6'],
+                ], static fn ($value) => $value !== null));
+            }
         }
 
         if (isset($attributes['region'])) {

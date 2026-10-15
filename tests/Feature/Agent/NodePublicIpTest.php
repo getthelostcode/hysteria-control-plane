@@ -150,6 +150,88 @@ class NodePublicIpTest extends TestCase
         $this->assertDatabaseHas('audit_logs', ['action' => 'node.updated']);
     }
 
+    public function test_ipv4_is_preferred_over_ipv6_and_the_v6_is_still_recorded(): void
+    {
+        // 双栈节点：agent 探测到的和代理链看到的都可能是 v6，而面板要显示 v4
+        $this->assertSame(
+            ['ip' => '203.0.113.7', 'source' => 'agent', 'ip_v6' => '2001:4860:4860::8888'],
+            PublicIp::resolve('203.0.113.7', '2001:4860:4860::8888'),
+        );
+
+        // agent 只报了 v6、代理链给了 v4 → 用 v4，但来源如实标为 proxy
+        $this->assertSame(
+            ['ip' => '203.0.113.8', 'source' => 'proxy', 'ip_v6' => '2001:4860:4860::8888'],
+            PublicIp::resolve('2001:4860:4860::8888', '203.0.113.8'),
+        );
+
+        // 只有 v6：照实显示 v6（宁可显示 v6 也不要不显示）
+        $this->assertSame(
+            ['ip' => '2606:4700:4700::1111', 'source' => 'agent', 'ip_v6' => '2606:4700:4700::1111'],
+            PublicIp::resolve('2606:4700:4700::1111', '127.0.0.1'),
+        );
+
+        $this->assertTrue(PublicIp::isIpv4('203.0.113.7'));
+        $this->assertFalse(PublicIp::isIpv4('2606:4700:4700::1111'));
+    }
+
+    public function test_enroll_stores_the_ipv4_of_a_dual_stack_node(): void
+    {
+        [$token, $plain] = EnrollToken::issue([]);
+
+        $this->withServerVariables(['REMOTE_ADDR' => '127.0.0.1'])
+            ->withHeaders(['CF-Connecting-IP' => '2001:4860:4860::8888'])
+            ->postJson('/api/v1/agent/enroll', [
+                'enroll_token' => $plain,
+                'hostname' => 'dual-stack',
+                'machine_id' => 'machine-dual-stack',
+                'public_ip' => '203.0.113.7',
+            ])->assertOk();
+
+        $node = Node::query()->firstOrFail();
+
+        $this->assertSame('203.0.113.7', $node->ip, '面板展示 IPv4');
+        $this->assertSame('2001:4860:4860::8888', $node->meta['ip_v6'], 'v6 出口仍留档');
+    }
+
+    public function test_heartbeat_with_only_ipv6_does_not_replace_a_known_ipv4(): void
+    {
+        $node = Node::factory()->create(['ip' => '203.0.113.42', 'meta' => ['ip_source' => 'agent']]);
+
+        // 节点切到 v6 出口：v4 不该被 v6 顶掉（面板按 v4 展示）
+        $this->agentCall($node, 'POST', '/api/agent/v1/heartbeat', [
+            'agent_version' => '0.1.0',
+            'public_ip' => '2606:4700:4700::1111',
+        ])->assertOk();
+
+        $this->assertSame('203.0.113.42', $node->refresh()->ip);
+    }
+
+    public function test_re_enroll_over_ipv6_does_not_downgrade_a_known_ipv4(): void
+    {
+        // 真实现场：节点名 japan2.3ai.best，从 IPv6 出口访问 Cloudflare，
+        // refreshMetadata 曾把面板里的 IPv4 覆盖成 2a14:640:1:f6eb::1。
+        [$token, $plain] = EnrollToken::issue([]);
+
+        $node = Node::factory()->create([
+            'ip' => '203.0.113.42',
+            'meta' => ['machine_id' => 'dual-stack-node', 'ip_source' => 'agent'],
+        ]);
+
+        $this->withServerVariables(['REMOTE_ADDR' => '127.0.0.1'])
+            ->withHeaders(['CF-Connecting-IP' => '2001:4860:4860::8888'])
+            ->postJson('/api/v1/agent/enroll', [
+                'enroll_token' => $plain,
+                'hostname' => 'dual-stack-node',
+                'machine_id' => 'dual-stack-node',
+                'replace' => true,
+            ])->assertOk();
+
+        $node->refresh();
+
+        $this->assertSame('203.0.113.42', $node->ip, '重注册不得把 IPv4 换成 IPv6');
+        $this->assertSame('2001:4860:4860::8888', $node->meta['ip_v6'], 'IPv6 出口留档');
+    }
+
     public function test_public_ip_helper_prefers_the_agent_report_and_guards_cloudflare_header(): void
     {
         // 对端是公网地址（不在 trusted_proxies 里）：CF-Connecting-IP 不得采信，
@@ -165,8 +247,8 @@ class NodePublicIpTest extends TestCase
         $trusted->headers->set('CF-Connecting-IP', '203.0.113.6');
         $this->assertSame('203.0.113.6', PublicIp::fromRequest($trusted));
 
-        $this->assertSame(['ip' => '203.0.113.7', 'source' => 'agent'], PublicIp::resolve('203.0.113.7', '127.0.0.1'));
-        $this->assertSame(['ip' => '203.0.113.8', 'source' => 'proxy'], PublicIp::resolve(null, '203.0.113.8'));
-        $this->assertSame(['ip' => '10.0.0.1', 'source' => 'peer'], PublicIp::resolve('192.168.1.1', '10.0.0.1'));
+        $this->assertSame(['ip' => '203.0.113.7', 'source' => 'agent', 'ip_v6' => null], PublicIp::resolve('203.0.113.7', '127.0.0.1'));
+        $this->assertSame(['ip' => '203.0.113.8', 'source' => 'proxy', 'ip_v6' => null], PublicIp::resolve(null, '203.0.113.8'));
+        $this->assertSame(['ip' => '10.0.0.1', 'source' => 'peer', 'ip_v6' => null], PublicIp::resolve('192.168.1.1', '10.0.0.1'));
     }
 }

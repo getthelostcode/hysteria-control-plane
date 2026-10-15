@@ -259,8 +259,17 @@ class AgentV1Controller extends Controller
         if ($public['ip'] !== null) {
             $fill['ip'] = $public['ip'];
             $meta['ip_source'] = $public['source'];
-            $fill['meta'] = $meta;
+            $meta['ip_v6'] = $public['ip_v6'];
         }
+
+        // 已有 IPv4 不被新的 IPv6 顶掉（与 NodeService::markSeen 同一策略）：
+        // 双栈节点从 v6 出口访问控制面时，观测到的客户端地址是 v6，但面板按 IPv4 展示。
+        if (! \App\Support\PublicIp::isIpv4($fill['ip'] ?? $node->ip) && \App\Support\PublicIp::isIpv4($node->ip)) {
+            $fill['ip'] = $node->ip;
+            $meta['ip_v6'] = $meta['ip_v6'] ?? ($public['ip'] ?? null);
+        }
+
+        $fill['meta'] = $meta;
 
         $node->forceFill($fill)->save();
     }

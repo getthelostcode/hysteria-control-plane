@@ -87,6 +87,12 @@ Redis 仍然是必需的（限流/防重放/队列/会话）；只把数据库�
    因为 `X-Forwarded-For` 可伪造）。
 2. 重启 PHP-FPM / dev server 让配置生效。
 
+**地址族**：面板按 **IPv4** 展示。双栈节点从 IPv6 出口访问 Cloudflare 时，控制面观测到的
+客户端地址是 `2001:...`（真实现场：某个日本节点的 ip 被写成 `2a14:640:1:f6eb::1`），所以：
+agent 探测出口地址时**强制走 tcp4**（Go 在双栈机器上默认优先 IPv6）；面板在候选里优先取
+IPv4，且**已有的 IPv4 不会被新的 IPv6 顶掉**（避免列表在 v4/v6 之间跳变）。IPv6 出口仍记录在
+`nodes.meta.ip_v6`，面板有默认隐藏的「IPv6 出口」列。
+
 取值优先级（见 `App\Support\PublicIp`）：
 
 | 来源 | 何时使用 | `nodes.meta.ip_source` |

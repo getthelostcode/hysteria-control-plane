@@ -52,7 +52,7 @@ class NodeResource extends Resource
                     ->default(Node::STATUS_ONLINE)
                     ->required(),
                 Forms\Components\TextInput::make('ip')
-                ->label('公网 IP')
+                ->label('公网 IP (IPv4)')
                 ->maxLength(45)
                 ->helperText('节点对外展示/排障用的公网地址。留空则等 agent 下一次上报自动填充。'),
                 Forms\Components\TextInput::make('region')->label('区域')->maxLength(64),
@@ -86,10 +86,17 @@ class NodeResource extends Resource
                         $record->status === Node::STATUS_DISABLED => 'gray',
                         default => 'warning',
                     }),
+                Tables\Columns\TextColumn::make('ip_v6')
+                    ->label('IPv6 出口')
+                    ->state(fn (Node $record): ?string => data_get($record->meta, 'ip_v6'))
+                    ->placeholder('-')
+                    ->copyable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+
                 Tables\Columns\TextColumn::make('region')->label('区域')->badge()->sortable()->searchable(),
                 Tables\Columns\TextColumn::make('tags')->label('标签')->badge()->separator(','),
                 Tables\Columns\TextColumn::make('ip')
-                    ->label('公网 IP')
+                    ->label('公网 IP (IPv4)')
                     ->copyable()
                     ->placeholder('未知')
                     ->tooltip(fn (Node $record): ?string => ($record->meta['ip_source'] ?? null) === 'agent'

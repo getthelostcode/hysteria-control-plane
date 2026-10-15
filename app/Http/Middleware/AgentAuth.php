@@ -75,7 +75,9 @@ class AgentAuth
         // 顺带刷新公网地址：节点换 IP（换机房/重拨）后，面板不必等下一次注册。
         // 只有真的解析出公网地址才传，否则 markSeen 会保留原值（心跳里 agent 自报的优先）。
         app(NodeService::class)->markSeen($node, array_filter([
-            'ip' => $request === null ? null : PublicIp::fromRequest($request),
+            // 用 observed_ip 而不是 ip：ip 是「节点自报」语义（心跳体里的字段），
+            // 混用会让来源标记失真（观测到的地址被当成 agent 上报）。
+            'observed_ip' => $request === null ? null : PublicIp::fromRequest($request),
         ], static fn ($value) => $value !== null));
     }
 

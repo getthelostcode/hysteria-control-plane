@@ -139,25 +139,57 @@ final class PublicIp
         return false;
     }
 
+    /** 是否 IPv4（面板默认展示的地址族）。 */
+    public static function isIpv4(?string $ip): bool
+    {
+        return $ip !== null && filter_var(trim($ip), FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false;
+    }
+
     /**
      * 决定节点要显示的地址。
      *
-     * @return array{ip: ?string, source: string} source ∈ agent|proxy|peer
+     * **地址族优先于来源**：双栈节点从 IPv6 出口访问时，控制面观测到的和 agent 探测到的
+     * 都可能是 `2001:...`，而运维要的是可读、可 ping、能填进防火墙的 IPv4。所以只要任何
+     * 一个候选是公网 IPv4 就用它；IPv6 仍然记录在 `ip_v6` 里，不丢信息。
+     *
+     * @return array{ip: ?string, source: string, ip_v6: ?string} source ∈ agent|proxy|peer
      */
     public static function resolve(?string $reported, ?string $observed): array
     {
-        $reported = self::isPublic($reported) ? $reported : null;
+        // 保留原始值：都不是公网地址时还要作为「观测到的对端」如实记录（内网节点场景）。
+        $rawObserved = $observed;
 
-        if ($reported !== null) {
-            return ['ip' => $reported, 'source' => 'agent'];
+        $reported = self::isPublic($reported) ? $reported : null;
+        $observed = self::isPublic($observed) ? $observed : null;
+
+        $candidates = [['agent', $reported], ['proxy', $observed]];
+
+        foreach ($candidates as [$source, $ip]) {
+            if ($ip !== null && self::isIpv4($ip)) {
+                return ['ip' => $ip, 'source' => $source, 'ip_v6' => self::firstV6($candidates)];
+            }
         }
 
-        if (self::isPublic($observed)) {
-            return ['ip' => $observed, 'source' => 'proxy'];
+        foreach ($candidates as [$source, $ip]) {
+            if ($ip !== null) {
+                return ['ip' => $ip, 'source' => $source, 'ip_v6' => $ip];
+            }
         }
 
         // 都不像公网地址（私网/回环/空）：仍然记下来，但标记来源，便于面板区分
         // 「这是节点自报的公网 IP」还是「这只是我们看到的对端地址」。
-        return ['ip' => $observed, 'source' => 'peer'];
+        return ['ip' => $rawObserved ?? $reported, 'source' => 'peer', 'ip_v6' => null];
+    }
+
+    /** @param  list<array{0: string, 1: ?string}>  $candidates */
+    private static function firstV6(array $candidates): ?string
+    {
+        foreach ($candidates as [, $ip]) {
+            if ($ip !== null && ! self::isIpv4($ip)) {
+                return $ip;
+            }
+        }
+
+        return null;
     }
 }
