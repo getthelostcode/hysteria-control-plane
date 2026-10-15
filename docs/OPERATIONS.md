@@ -24,6 +24,28 @@
 | 面板 403 登录后 | `users` 角色不含 super-admin/admin/operator/viewer 之一（`canAccessPanel` 会直接 403） |
 | WebSocket 连不上 | nginx `/app` 反代是否带 Upgrade 头；`REVERB_HOST/PORT/SCHEME` 与前端 `VITE_REVERB_*` 是否一致；`php artisan reverb:start` 是否在跑 |
 
+## 2.5 SQLite 试用模式
+
+除了生产用的 MySQL 8，控制平面也可以在 SQLite 上完整运行（迁移、种子、agent API、
+管理 API、Filament 面板、OpenAPI 均已验证；本仓库两套测试配置都是 89 用例全绿）：
+
+```bash
+php artisan test -c phpunit.sqlite.xml        # 内存库，不落文件
+DB_CONNECTION=sqlite bash install.sh          # 文件库 database/database.sqlite
+```
+
+差异与注意：
+
+| 项 | MySQL 8（生产） | SQLite（试用） |
+|---|---|---|
+| `json` 列 | 原生 JSON 类型，可查询 | TEXT + Eloquent cast（不支持下推查询） |
+| 排序规则 | `utf8mb4_0900_ai_ci` | 二进制比较（中文排序/去重行为不同） |
+| 严格类型/长度 | 有（超长会报错） | 无（写超长值不报错） |
+| 并发写 | 行级锁 | 库级锁（5000 节点场景必须用 MySQL） |
+| 外键 | 默认开启 | `DB_FOREIGN_KEYS=true`（install.sh 已写入） |
+
+Redis 仍然是必需的（限流/防重放/队列/会话）；只把数据库换掉而已。
+
 ## 3. 数据与保留
 
 * **指标**：`metrics:prune --days=N`（默认取 `settings.metrics_retention_days=30`），每天 03:30 自动执行。

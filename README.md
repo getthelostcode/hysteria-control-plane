@@ -55,6 +55,24 @@ php artisan serve --port=8088        # 本地快速体验
 | 管理 API | `/api/admin/v1/*`（Sanctum Bearer） |
 | WebSocket | `wss://<host>/app/<REVERB_APP_KEY>` |
 
+## SQLite 试用模式（无需 MySQL）
+
+不想装 MySQL 也能跑通全部功能：迁移/种子/接口/面板主题都已在 SQLite 上验证。
+
+```bash
+# 1) 测试：内存 SQLite，89 用例 / 360 断言
+php artisan test -c phpunit.sqlite.xml
+
+# 2) 整套环境：SQLite 文件库 + Redis
+DB_CONNECTION=sqlite bash install.sh          # 生成 database/database.sqlite
+php artisan serve --port=8097                 # 面板 /admin，文档 /docs/api
+```
+
+* `phpunit.sqlite.xml` 只切数据库，其余（array cache、sync queue）与 `phpunit.xml` 一致；
+  默认 `phpunit.xml` 仍跑 MySQL，用于保证生产一致性（utf8mb4 排序规则、真实外键、严格类型）。
+* SQLite 下 `json` 列落成 TEXT、没有 MySQL 的长度/精度校验，**上线前请在 MySQL 8 上再跑一遍**
+  `php artisan test`（当前两套配置都是全绿）。
+
 ## 验收标准对照
 
 | 验收项 | 实现 | 验证方式 |
@@ -124,8 +142,9 @@ app/
 ## 测试
 
 ```bash
-php artisan test                       # 89 tests / 360 assertions
-php artisan test --testsuite=Unit      # 纯单元测试
+php artisan test                            # MySQL 8（生产一致性）：89 tests / 360 assertions
+php artisan test -c phpunit.sqlite.xml      # SQLite 内存库（免 MySQL）：89 tests / 360 assertions
+php artisan test --testsuite=Unit           # 纯单元测试
 python3 tests/e2e/e2e_agent_flow.py http://127.0.0.1:8088   # 真实 HTTP 端到端，30 项断言
 ```
 

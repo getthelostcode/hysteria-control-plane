@@ -6,6 +6,7 @@
 #   sudo bash install.sh --no-seed       # skip demo fleet seeding
 #   sudo bash install.sh --no-services   # skip systemd units (horizon / reverb / scheduler)
 #   sudo bash install.sh --upgrade       # update an existing checkout (pull, migrate, rebuild)
+#   DB_CONNECTION=sqlite bash install.sh # trial/dev install without MySQL
 #
 # Idempotent: re-running it will not destroy data. It creates .env from
 # .env.example on first run and only fills in what is missing afterwards.
@@ -17,6 +18,9 @@ SEED=1
 INSTALL_SERVICES=1
 UPGRADE_ONLY=0
 
+# DB_CONNECTION=sqlite gives you a zero-dependency trial/dev environment
+# (no MySQL needed). Production stays on MySQL 8.
+DB_DRIVER="${DB_CONNECTION:-mysql}"
 DB_NAME="${DB_NAME:-hysteria_cp}"
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-3306}"
@@ -64,7 +68,9 @@ if [ "$UPGRADE_ONLY" -eq 0 ]; then
     log "node: $(node -v) / npm: $(npm -v)"
 fi
 
-command -v mysql >/dev/null || warn "mysql client not found: create the database manually"
+if [ "$DB_DRIVER" = "mysql" ]; then
+    command -v mysql >/dev/null || warn "mysql client not found: create the database manually"
+fi
 
 # ------------------------------------------------------------------ env ----
 cd "$APP_DIR"
@@ -93,12 +99,21 @@ set_env() {
     fi
 }
 
-set_env DB_CONNECTION mysql force
-set_env DB_HOST "$DB_HOST" force
-set_env DB_PORT "$DB_PORT" force
-set_env DB_DATABASE "$DB_NAME" force
-set_env DB_USERNAME "$DB_USER" force
-set_env DB_PASSWORD "$DB_PASSWORD" force
+set_env DB_CONNECTION "$DB_DRIVER" force
+
+if [ "$DB_DRIVER" = "sqlite" ]; then
+    SQLITE_FILE="$APP_DIR/database/database.sqlite"
+    mkdir -p database
+    [ -f "$SQLITE_FILE" ] || : > "$SQLITE_FILE"
+    set_env DB_DATABASE "$SQLITE_FILE" force
+    set_env DB_FOREIGN_KEYS true force
+else
+    set_env DB_HOST "$DB_HOST" force
+    set_env DB_PORT "$DB_PORT" force
+    set_env DB_DATABASE "$DB_NAME" force
+    set_env DB_USERNAME "$DB_USER" force
+    set_env DB_PASSWORD "$DB_PASSWORD" force
+fi
 set_env APP_URL "$APP_URL_VALUE" force
 set_env APP_ENV "${APP_ENV:-production}"
 set_env APP_DEBUG "${APP_DEBUG:-false}"
@@ -107,10 +122,16 @@ set_env CACHE_STORE redis force
 set_env SESSION_DRIVER redis force
 set_env BROADCAST_CONNECTION reverb force
 set_env REDIS_CLIENT phpredis force
-log ".env written (db ${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME})"
+if [ "$DB_DRIVER" = "sqlite" ]; then
+    log ".env written (sqlite ${APP_DIR}/database/database.sqlite)"
+else
+    log ".env written (db ${DB_USER}@${DB_HOST}:${DB_PORT}/${DB_NAME})"
+fi
 
 # ------------------------------------------------------------- database ----
-if command -v mysql >/dev/null; then
+if [ "$DB_DRIVER" = "sqlite" ]; then
+    log "sqlite database ready (no server to provision)"
+elif command -v mysql >/dev/null; then
     log "ensuring database ${DB_NAME} exists"
     MYSQL_PWD="$DB_PASSWORD" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -e "
         CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
@@ -182,6 +203,7 @@ cat <<SUMMARY
 
   ${APP_NAME} installed.
 
+  Database   : ${DB_DRIVER}
   Panel      : ${APP_URL_VALUE}/${PANEL_PATH}   (login ${ADMIN_EMAIL} / ${ADMIN_PASSWORD})
   API docs   : ${APP_URL_VALUE}/docs/api        (OpenAPI JSON: /docs/api.json)
   Agent API  : ${APP_URL_VALUE}/api/agent/v1/*
