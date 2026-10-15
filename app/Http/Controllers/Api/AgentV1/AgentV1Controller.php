@@ -53,9 +53,19 @@ class AgentV1Controller extends Controller
             ->first();
 
         if ($enrollToken === null || ! $enrollToken->isUsable()) {
-            AuditLogger::log('agent_v1.enroll_rejected', null, ['token_prefix' => substr($token, 0, 6)], 'agent', $request->ip());
+            $diag = \App\Models\EnrollToken::diagnose($token);
 
-            return $this->error('invalid_token', 'enroll_token 无效、已使用或已过期。', 401);
+            AuditLogger::log('agent_v1.enroll_rejected', null, [
+                'reason' => $diag['reason'],
+                'token_prefix' => $diag['prefix'],
+                'hostname' => (string) $request->input('hostname', ''),
+            ], 'agent', $request->ip());
+
+            // 稳定 code=invalid_token + 可操作的 reason/message（掩码值、已用尽、已过期…）
+            return $this->error('invalid_token', $diag['message'], 401, [
+                'reason' => $diag['reason'],
+                'token_prefix' => $diag['prefix'],
+            ]);
         }
 
         $attributes = $request->agentAttributes();

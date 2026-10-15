@@ -7,7 +7,6 @@ namespace App\Filament\Resources\EnrollTokenResource\Pages;
 use App\Filament\Resources\EnrollTokenResource;
 use App\Models\EnrollToken;
 use App\Support\AuditLogger;
-use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Database\Eloquent\Model;
 
@@ -34,12 +33,9 @@ class CreateEnrollToken extends CreateRecord
             'max_uses' => $token->max_uses,
         ], auth()->user()?->name);
 
-        Notification::make()
-            ->title('注册令牌（仅显示一次）')
-            ->body($plain)
-            ->persistent()
-            ->success()
-            ->send();
+        // 明文只在这里出现一次（库里只有 SHA-256 哈希）；用带 CopyAction 的通知，
+        // 顺带警告「列表里的前缀是掩码」，避免手抄掩码导致 401。
+        EnrollTokenResource::plaintextNotification($token, $plain)->send();
 
         return $token;
     }

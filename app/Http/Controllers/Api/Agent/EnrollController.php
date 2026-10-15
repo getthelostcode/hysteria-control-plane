@@ -21,9 +21,14 @@ class EnrollController extends Controller
             ->first();
 
         if ($token === null || ! $token->isUsable()) {
+            $diag = EnrollToken::diagnose($plain);
+
+            // error 保持稳定（agent/契约按它判永久失败），reason 给运维看具体原因。
             return response()->json([
                 'error' => 'invalid_token',
-                'message' => 'Enrollment token is unknown, expired or already used up.',
+                'reason' => $diag['reason'],
+                'message' => $diag['message'],
+                'token_prefix' => $diag['prefix'],
             ], 422);
         }
 
