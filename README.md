@@ -26,6 +26,28 @@ Laravel 11 + Filament v3 构建的 Hysteria2 **节点管理控制平面**：为 
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
+## 配置版本管理（面板）
+
+节点 → 配置版本，每一版都可以：
+
+* **查看正文**：行操作「查看正文」/ 点进详情，直接看 YAML 与 sha256；
+* **修改正文**：行操作「编辑正文」就地改（sha256 会重算，写历史与审计）。改的是「默认下发」那一版时，
+  节点下一次同步/轮询就会取走新内容（agent 会带上本机配置的 sha256，所以版本号没变也认得出来）；
+* **指定默认下发哪一版**：任意版本行操作「设为默认下发」——不新生成版本，只是把下发指针挪过去，
+  节点下次同步即生效（想保留历史、追加新版本则用「回滚到此版本」）；
+* **发布新版本**：右上角「新建」。新发布的版本会自动成为默认下发的那一版。
+
+命令行等价操作：
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" .../nodes/{node_id}/configs            # 列表（看 is_current）
+curl -H "Authorization: Bearer $TOKEN" .../nodes/{node_id}/configs/3          # 看第 3 版正文
+curl -X PATCH -H "Authorization: Bearer $TOKEN" -d '{"content_yaml":"..."}' \
+     .../nodes/{node_id}/configs/3                                           # 改第 3 版正文
+curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"reason":"就下这版"}' \
+     .../nodes/{node_id}/configs/3/activate                                  # 指定下发第 3 版
+```
+
 ## 快速开始
 
 ```bash

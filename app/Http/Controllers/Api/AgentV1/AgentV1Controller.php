@@ -172,12 +172,17 @@ class AgentV1Controller extends Controller
 
         $config = $configs->latest($node);
         $current = $request->integer('current_version', 0);
+        // 就地把某个版本的正文改掉时版本号不变 —— 只比版本号会让节点永远拿不到新内容。
+        // agent 会带上当前生效配置的 sha256，这里一并比对。
+        $currentSha = trim((string) $request->input('current_sha256', ''));
 
         if ($config === null) {
             return response()->json(['ok' => true, 'up_to_date' => true, 'config' => null]);
         }
 
-        if ($current === (int) $config->version) {
+        $shaMatches = $currentSha === '' || hash_equals((string) $config->sha256, $currentSha);
+
+        if ($current === (int) $config->version && $shaMatches) {
             return response()->json([
                 'ok' => true,
                 'up_to_date' => true,

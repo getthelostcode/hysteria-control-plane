@@ -19,6 +19,7 @@ class NodeConfigResource extends JsonResource
             'version' => $this->version,
             'sha256' => $this->sha256,
             'status' => $this->status,
+            'is_current' => (bool) $this->is_current,
             'error' => $this->error,
             'published_by' => $this->published_by,
             'published_at' => $this->published_at?->toIso8601String(),

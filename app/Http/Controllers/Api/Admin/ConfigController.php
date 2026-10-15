@@ -18,15 +18,15 @@ use Illuminate\Http\Request;
 
 class ConfigController extends Controller
 {
-    public function index(Request $request, Node $node): JsonResponse
+    public function index(Request $request, Node $node, ConfigService $configs): JsonResponse
     {
         $this->authorize('viewAny', NodeConfig::class);
 
-        $configs = $node->configs()->orderByDesc('version')->limit(100)->get();
+        $versions = $node->configs()->orderByDesc('version')->limit(100)->get();
 
         return response()->json([
-            'data' => NodeConfigResource::collection($configs)->resolve(),
-            'active_version' => $node->activeConfig?->version,
+            'data' => NodeConfigResource::collection($versions)->resolve(),
+            'active_version' => $configs->latest($node)?->version ?? $node->activeConfig?->version,
         ]);
     }
 
@@ -71,6 +71,54 @@ class ConfigController extends Controller
             'data' => (new NodeConfigResource($config))->resolve(),
             'rolled_back_to' => $version,
         ], 201);
+    }
+
+    public function show(Request $request, Node $node, int $version): JsonResponse
+    {
+        $this->authorize('viewAny', NodeConfig::class);
+
+        $config = $node->configs()->where('version', $version)->firstOrFail();
+
+        return response()->json([
+            'data' => (new NodeConfigResource($config))->resolve(),
+            'content_yaml' => $config->content_yaml,
+        ]);
+    }
+
+    /** 就地修改某个版本的正文（sha256 会重算；改的是当前版本时节点下次同步即取走）。 */
+    public function update(PublishConfigRequest $request, Node $node, int $version, ConfigService $configs): JsonResponse
+    {
+        $config = $node->configs()->where('version', $version)->firstOrFail();
+
+        $this->authorize('publishConfig', $node);
+
+        $yaml = (string) ($request->validated('content_yaml') ?? '');
+
+        if (trim($yaml) === '') {
+            return response()->json(['message' => 'content_yaml 不能为空'], 422);
+        }
+
+        $updated = $configs->updateContent($config, $yaml, $request->user(), (string) ($request->validated('reason') ?? ''));
+
+        return response()->json([
+            'data' => (new NodeConfigResource($updated))->resolve(),
+            'content_yaml' => $updated->content_yaml,
+        ]);
+    }
+
+    /** 指定「默认下发」的版本（运维说「就下这一版」）。 */
+    public function activate(Request $request, Node $node, int $version, ConfigService $configs): JsonResponse
+    {
+        $this->authorize('publishConfig', $node);
+
+        $data = $request->validate(['reason' => ['nullable', 'string', 'max:500']]);
+
+        $config = $configs->setCurrent($node, $version, $request->user(), (string) ($data['reason'] ?? ''));
+
+        return response()->json([
+            'data' => (new NodeConfigResource($config))->resolve(),
+            'active_version' => $config->version,
+        ]);
     }
 
     public function diff(Request $request, Node $node, int $version): JsonResponse

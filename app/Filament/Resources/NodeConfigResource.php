@@ -67,6 +67,15 @@ class NodeConfigResource extends Resource
             ->defaultSort('id', 'desc')
             ->columns([
                 Tables\Columns\TextColumn::make('node.name')->label('节点')->searchable()->sortable(),
+                Tables\Columns\IconColumn::make('is_current')
+                    ->label('默认下发')
+                    ->boolean()
+                    ->trueIcon('heroicon-o-check-circle')
+                    ->falseIcon('heroicon-o-minus-small')
+                    ->trueColor('success')
+                    ->falseColor('gray')
+                    ->tooltip('节点会更新到这一版（可在行操作里改）')
+                    ->sortable(),
                 Tables\Columns\TextColumn::make('version')->label('版本')->badge()->color('info')->sortable(),
                 Tables\Columns\TextColumn::make('sha256')
                     ->label('sha256')
@@ -99,6 +108,58 @@ class NodeConfigResource extends Resource
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
+                Tables\Actions\Action::make('content')
+                    ->label('查看正文')
+                    ->icon('heroicon-o-document-text')
+                    ->modalHeading(fn (NodeConfig $record): string => 'v' . $record->version . ' 配置正文')
+                    ->modalContent(fn (NodeConfig $record) => view('filament.resources.node-config-content', [
+                        'config' => $record,
+                    ]))
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel('关闭'),
+                Tables\Actions\Action::make('edit')
+                    ->label('编辑正文')
+                    ->icon('heroicon-o-pencil-square')
+                    ->visible(fn (): bool => Auth::user()?->hasAnyRole(['super-admin', 'admin', 'operator']) ?? false)
+                    ->modalDescription('就地修改此版本的正文（sha256 会重算）。若改的是「默认下发」版本，节点下一次同步/轮询即取走新内容。')
+                    ->fillForm(fn (NodeConfig $record): array => ['content_yaml' => $record->content_yaml])
+                    ->form([
+                        Forms\Components\Textarea::make('content_yaml')
+                            ->label('配置正文（YAML）')
+                            ->rows(18)
+                            ->required()
+                            ->extraInputAttributes(['style' => 'font-family: ui-monospace, monospace; font-size: 12px;']),
+                        Forms\Components\TextInput::make('reason')->label('修改原因')->default('panel edit'),
+                    ])
+                    ->action(function (NodeConfig $record, array $data, ConfigService $configs): void {
+                        $updated = $configs->updateContent($record, (string) $data['content_yaml'], Auth::user(), (string) ($data['reason'] ?? ''));
+
+                        Notification::make()
+                            ->title('v' . $updated->version . ' 正文已更新')
+                            ->body('sha256 ' . $updated->shortHash())
+                            ->success()
+                            ->send();
+                    }),
+                Tables\Actions\Action::make('activate')
+                    ->label('设为默认下发')
+                    ->icon('heroicon-o-arrow-path-rounded-square')
+                    ->color('success')
+                    ->visible(fn (NodeConfig $record): bool => (! $record->is_current)
+                        && (Auth::user()?->hasAnyRole(['super-admin', 'admin', 'operator']) ?? false))
+                    ->requiresConfirmation()
+                    ->modalDescription('把这一版设为该节点默认下发的版本：节点下一次同步/轮询就会取走它的内容（不新生成版本）。')
+                    ->form([
+                        Forms\Components\TextInput::make('reason')->label('原因')->default('指定下发版本'),
+                    ])
+                    ->action(function (NodeConfig $record, array $data, ConfigService $configs): void {
+                        $current = $configs->setCurrent($record->node, $record->version, Auth::user(), (string) ($data['reason'] ?? ''));
+
+                        Notification::make()
+                            ->title('v' . $current->version . ' 已设为默认下发')
+                            ->body('节点下次同步即生效')
+                            ->success()
+                            ->send();
+                    }),
                 Tables\Actions\Action::make('rollback')
                     ->label('回滚到此版本')
                     ->icon('heroicon-o-arrow-uturn-left')

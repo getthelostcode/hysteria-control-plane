@@ -39,6 +39,9 @@ Route::get('commands', [CommandController::class, 'index'])->name('commands.inde
 Route::get('nodes/{node}/configs', [ConfigController::class, 'index'])->name('nodes.configs.index');
 Route::post('nodes/{node}/configs', [ConfigController::class, 'store'])->name('nodes.configs.store');
 Route::post('nodes/{node}/configs/{version}/rollback', [ConfigController::class, 'rollback'])->name('nodes.configs.rollback');
+Route::get('nodes/{node}/configs/{version}', [ConfigController::class, 'show'])->name('nodes.configs.show');
+Route::patch('nodes/{node}/configs/{version}', [ConfigController::class, 'update'])->name('nodes.configs.update');
+Route::post('nodes/{node}/configs/{version}/activate', [ConfigController::class, 'activate'])->name('nodes.configs.activate');
 Route::get('nodes/{node}/configs/{version}/diff', [ConfigController::class, 'diff'])->name('nodes.configs.diff');
 
 Route::get('enroll-tokens', [EnrollTokenController::class, 'index'])->name('enroll-tokens.index');

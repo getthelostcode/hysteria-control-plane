@@ -150,7 +150,11 @@ php-fpm / `artisan serve` 无法终结这种连接（agent 自己的 DESIGN.md �
 返回 `heartbeat_interval`、最新配置版本与 `commands.pending` 计数。任何签名请求都会刷新
 存活状态（写库按节点 15 秒门控）。
 
-### GET /api/agent/v1/config/latest?current_version=N
+### GET /api/agent/v1/config/latest?current_version=N&current_sha256=<sha>
+
+`current_version` 是节点本机记录的版本号，`current_sha256` 是它当前生效配置的 sha256（可选）。
+**两者都对上**才回 `up_to_date: true` —— 否则运维就地把某个版本的正文改掉时（版本号不变），
+节点会永远拿不到新内容。返回的是「默认下发」的那一版（面板上可指定，见 Admin API 的 activate）。
 
 * 与最新版本一致：`{"ok":true,"up_to_date":true,"config":{"version":N,"sha256":"..."}}`
 * 有更新：额外返回 `content_yaml`、`status`、`published_at`。
@@ -240,9 +244,12 @@ TOKEN=$(curl -s -X POST https://control.example.com/api/admin/v1/auth/login \
 | POST | `/nodes/{node_id}/commands` | 下发指令 `{"type":"restart_hysteria","payload":{}}` |
 | POST | `/commands/bulk` | 批量/全网指令 `{"type":"reload_config","nodes":["nd_a"]}` |
 | GET | `/commands?status=&type=` | 指令列表 |
-| GET | `/nodes/{node_id}/configs` | 配置版本列表 |
+| GET | `/nodes/{node_id}/configs` | 配置版本列表（含 `is_current`；`active_version` = 默认下发的那一版） |
 | POST | `/nodes/{node_id}/configs` | 发布配置（`content_yaml` 为空时用模板渲染；`overrides` 可只覆盖部分键） |
-| POST | `/nodes/{node_id}/configs/{version}/rollback` | 回滚到指定版本（生成新版本） |
+| GET | `/nodes/{node_id}/configs/{version}` | 查看某个版本的正文（`content_yaml` + `data.is_current`） |
+| PATCH | `/nodes/{node_id}/configs/{version}` | 就地修改某个版本的正文（重算 sha256；改的是默认下发版本时节点下次同步即取走） |
+| POST | `/nodes/{node_id}/configs/{version}/activate` | **指定默认下发的版本**（不新生成版本，只挪指针） |
+| POST | `/nodes/{node_id}/configs/{version}/rollback` | 回滚到指定版本（以旧正文生成**新版本**，历史追加） |
 | GET | `/nodes/{node_id}/configs/{version}/diff` | 与上一版本的 diff（HTML + 统计） |
 | GET/POST | `/enroll-tokens` | 列出/生成注册令牌（明文只返回一次） |
 | DELETE | `/enroll-tokens/{id}` | 作废令牌 |
