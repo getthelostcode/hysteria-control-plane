@@ -13,6 +13,7 @@ use App\Services\ConfigService;
 use App\Services\NodeService;
 use App\Support\AuditLogger;
 use App\Support\Jwt;
+use App\Support\PublicIp;
 use App\Support\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -121,6 +122,51 @@ class AgentV1Controller extends Controller
      * so an Authorization header is verified against that node's secret; the
      * `?key=` form is accepted for manual probes.
      */
+    /**
+     * REST 兜底心跳：控制通道端点不可用（PHP 终结不了二进制 WS）时 agent 会打到这里。
+     *
+     * 目的只有一个 —— 让面板的存活时间与状态反映真实情况。返回字段与 /token 同构，
+     * 便于 agent 在降级模式下继续拿到心跳间隔与待执行指令数。
+     */
+    public function heartbeat(Request $request): JsonResponse
+    {
+        $node = $this->authenticateChannel($request);
+
+        if ($node === null) {
+            return $this->error('unauthorized', '缺少或无效的凭据（Authorization: Bearer <node_secret 自签 JWT> 或 ?key=<node_secret>）。', 401);
+        }
+
+        $this->nodes->markSeen($node, array_filter([
+            // agent 自报的公网地址优先（控制面在隧道后只看到代理地址）
+            'public_ip' => $request->input('public_ip'),
+            'observed_ip' => PublicIp::fromRequest($request),
+            'agent_version' => $request->input('agent_version'),
+            'version' => $request->input('hysteria_version'),
+        ], static fn ($value) => $value !== null && $value !== ''));
+
+        $latest = $this->configs->latest($node);
+
+        return response()->json([
+            'ok' => true,
+            'node_id' => $node->node_id,
+            'server_time' => now()->toIso8601String(),
+            'heartbeat_interval_seconds' => (int) Setting::get('heartbeat_interval', 30),
+            'telemetry_interval_seconds' => 15,
+            'config' => [
+                'version' => $latest?->version,
+                'sha256' => $latest?->sha256,
+                'revision' => $latest === null ? null : (string) $latest->version,
+            ],
+            'commands' => [
+                'pending' => \App\Models\NodeCommand::query()
+                    ->where('node_id', $node->id)
+                    ->where('status', \App\Models\NodeCommand::STATUS_PENDING)
+                    ->count(),
+            ],
+            'note' => 'REST 兜底心跳：本控制面不提供二进制 WS 控制通道。',
+        ]);
+    }
+
     public function token(Request $request): JsonResponse
     {
         $node = $this->authenticateChannel($request);
@@ -128,6 +174,12 @@ class AgentV1Controller extends Controller
         if ($node === null) {
             return $this->error('unauthorized', '缺少或无效的凭据（Authorization: Bearer <JWT signed with node_secret> 或 ?key=<node_secret>）。', 401);
         }
+
+        // 拿到 JWT 本身就是「节点活着且持有密钥」的证据：enroll 后 agent 会立刻做一次
+        // JWT 自检，这一步也该刷新存活，否则面板「最后心跳」永远停在注册那一刻。
+        $this->nodes->markSeen($node, [
+            'ip' => PublicIp::fromRequest($request),
+        ]);
 
         $base = rtrim((string) config('agent.public_url'), '/');
         $latest = $this->configs->latest($node);
@@ -270,6 +322,12 @@ class AgentV1Controller extends Controller
         }
 
         $fill['meta'] = $meta;
+
+        // 一次成功的重注册（--replace）本身就是「节点活着且持有密钥」的证据：
+        // 不刷新存活时间的话，面板「最后心跳」会永远停在最初注册那一刻（真实现场：
+        // 节点 12:23 完成重注册，列表仍显示 12:10）。
+        $fill['last_seen_at'] = now();
+        $fill['status'] = Node::STATUS_ONLINE;
 
         $node->forceFill($fill)->save();
     }

@@ -70,6 +70,7 @@ print(urllib.request.urlopen(req).read().decode())
 
 | Method | Endpoint | 说明 |
 |---|---|---|
+| POST | `/api/v1/agent/heartbeat` | REST 兜底心跳：控制通道（二进制 WS）不可用时 agent 用 `Authorization: Bearer <node_secret 自签 JWT>` 或 `?key=<node_secret>` 打这里，刷新 `last_seen_at`/状态/版本。返回字段与 `/token` 同构 |
 | POST | `/api/v1/agent/enroll` | `{enroll_token, hostname, node_name, os, arch, kernel, machine_id, boot_id, agent_version, hysteria_version, protocol, replace, public_ip}`；也接受 `X-Enroll-Token` 头。`public_ip` 是**节点自报的出口公网地址**：控制面在隧道/NAT 后只能看到代理地址，没有它面板就显示不了真实 IP |
 | GET | `/api/v1/agent/token` | 可选自检：`Authorization: Bearer <JWT>`（agent 用 `node_secret` 本地 HS256 自签，`sub`=node_id）或 `?key=<node_secret>` |
 | GET/POST | `/api/v1/agent/control` | agent 的二进制 Envelope 长连接通道；本面返回 **501 JSON** + 可用替代（见下） |

@@ -206,4 +206,95 @@ class AgentV1CompatibilityTest extends TestCase
         // A wrong method on a real endpoint is JSON too.
         $this->postJson('/api/agent/v1/ping')->assertStatus(405)->assertJsonPath('error', 'method_not_allowed');
     }
+
+    public function test_rest_fallback_heartbeat_records_liveness_and_versions(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'rest-fallback-1',
+            'machine_id' => 'machine-rest-fallback',
+        ]))->assertOk();
+
+        $node = \App\Models\Node::query()->where('node_id', $enrolled->json('node_id'))->firstOrFail();
+
+        // 模拟「节点注册完就再没联系过」：存活时间停在过去，状态离线
+        $node->forceFill([
+            'status' => \App\Models\Node::STATUS_OFFLINE,
+            'last_seen_at' => now()->subHour(),
+        ])->save();
+
+        $jwt = Jwt::encode(['sub' => $node->node_id, 'exp' => now()->addHour()->getTimestamp()], $node->plainSecret());
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->postJson('/api/v1/agent/heartbeat', [
+                'agent_version' => '0.1.0',
+                'hysteria_version' => '2.6.0',
+                'hysteria_running' => true,
+                'ready' => true,
+                'degraded' => true,
+                'public_ip' => '203.0.113.9',
+            ])
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('node_id', $node->node_id)
+            ->assertJsonStructure(['heartbeat_interval_seconds', 'config' => ['version'], 'commands' => ['pending']]);
+
+        $node->refresh();
+
+        // 这就是用户看到的问题：面板「最后心跳」不动。REST 兜底心跳必须把它推到现在。
+        $this->assertTrue($node->last_seen_at->greaterThan(now()->subMinute()), 'last_seen_at 应刷新到现在');
+        $this->assertSame(\App\Models\Node::STATUS_ONLINE, $node->status);
+        $this->assertSame('203.0.113.9', $node->ip);
+        $this->assertSame('2.6.0', $node->version);
+        $this->assertSame('0.1.0', $node->agent_version);
+    }
+
+    public function test_rest_fallback_heartbeat_rejects_bad_credentials(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'rest-fallback-2',
+            'machine_id' => 'machine-rest-fallback-2',
+        ]))->assertOk();
+
+        $this->postJson('/api/v1/agent/heartbeat', ['agent_version' => '0.1.0'])
+            ->assertStatus(401)
+            ->assertJsonPath('error', 'unauthorized');
+
+        $forged = Jwt::encode([
+            'sub' => $enrolled->json('node_id'),
+            'exp' => now()->addHour()->getTimestamp(),
+        ], 'nds_wrong_secret');
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $forged])
+            ->postJson('/api/v1/agent/heartbeat', ['agent_version' => '0.1.0'])
+            ->assertStatus(401);
+    }
+
+    public function test_replace_re_enroll_refreshes_liveness(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'replace-liveness',
+            'machine_id' => 'machine-replace-liveness',
+        ]))->assertOk();
+
+        $node = \App\Models\Node::query()->where('node_id', $enrolled->json('node_id'))->firstOrFail();
+        $node->forceFill(['status' => \App\Models\Node::STATUS_OFFLINE, 'last_seen_at' => now()->subDay()])->save();
+
+        [$token2, $plain2] = \App\Models\EnrollToken::issue([]);
+        $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain2, [
+            'hostname' => 'replace-liveness',
+            'machine_id' => 'machine-replace-liveness',
+            'replace' => true,
+        ]))->assertOk();
+
+        $node->refresh();
+
+        // 重注册是「节点活着」的证据，必须刷新存活（真实现场：12:23 重注册，列表仍显示 12:10）
+        $this->assertSame(\App\Models\Node::STATUS_ONLINE, $node->status);
+        $this->assertTrue($node->last_seen_at->greaterThan(now()->subMinute()));
+    }
 }
