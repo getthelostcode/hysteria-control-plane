@@ -9,6 +9,8 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -32,6 +34,31 @@ return Application::configure(basePath: dirname(__DIR__))
                     'error' => 'invalid_config',
                     'message' => $exception->getMessage(),
                 ], 422);
+            }
+
+            return null;
+        });
+
+        // API clients (agents, integrations) always get JSON, never a Blade 404
+        // page — a wrong path should be a one-line diagnosis, not HTML soup.
+        $exceptions->render(function (NotFoundHttpException $exception, Request $request) {
+            if ($request->is('api/*')) {
+                return response()->json([
+                    'error' => 'not_found',
+                    'message' => 'No API endpoint matches ' . $request->getMethod() . ' ' . $request->getPathInfo(),
+                    'documentation' => url('/docs/api.json'),
+                ], 404);
+            }
+
+            return null;
+        });
+
+        $exceptions->render(function (MethodNotAllowedHttpException $exception, Request $request) {
+            if ($request->is('api/*')) {
+                return response()->json([
+                    'error' => 'method_not_allowed',
+                    'message' => $request->getMethod() . ' is not allowed on ' . $request->getPathInfo(),
+                ], 405);
             }
 
             return null;

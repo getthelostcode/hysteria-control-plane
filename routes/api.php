@@ -17,6 +17,11 @@ Route::prefix('agent/v1')
     ->name('agent.')
     ->group(base_path('routes/agent.php'));
 
+// hysteria-agent contract (/api/v1/agent/*) — same services, path layout of the agent.
+Route::prefix('v1/agent')
+    ->name('agent-v1.')
+    ->group(base_path('routes/agentv1.php'));
+
 Route::prefix('admin/v1')
     ->name('admin.')
     ->middleware(['auth:sanctum', 'throttle:admin-api'])

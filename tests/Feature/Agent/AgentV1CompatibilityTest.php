@@ -1,0 +1,209 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\Agent;
+
+use App\Models\EnrollToken;
+use App\Models\Node;
+use App\Support\Jwt;
+use App\Support\SignatureVerifier;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\SignedAgentRequests;
+use Tests\TestCase;
+
+/**
+ * Contract of the real hysteria-agent client (DESIGN.md §5.1 + its Go structs):
+ *   POST /api/v1/agent/enroll  {enroll_token, hostname, os, arch, machine_id, ...}
+ *   GET  /api/v1/agent/token   (self-check; may 404)
+ *   GET  /api/v1/agent/control (binary Envelope WebSocket)
+ */
+class AgentV1CompatibilityTest extends TestCase
+{
+    use RefreshDatabase;
+    use SignedAgentRequests;
+
+    /** @return array<string, mixed> */
+    private function agentPayload(string $token, array $overrides = []): array
+    {
+        return array_merge([
+            'enroll_token' => $token,
+            'hostname' => 'hk-edge-1',
+            'os' => 'linux',
+            'arch' => 'amd64',
+            'kernel' => '6.17.2-1-pve',
+            'machine_id' => 'a1b2c3d4e5f6',
+            'boot_id' => '9f8e7d6c',
+            'agent_version' => '1.0.0',
+            'hysteria_version' => '2.6.0',
+            'protocol' => '1',
+        ], $overrides);
+    }
+
+    public function test_agent_enroll_contract_succeeds_and_returns_the_expected_fields(): void
+    {
+        [, $plain] = EnrollToken::issue(['note' => 'agent-v1', 'max_uses' => 1]);
+
+        $response = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain))
+            ->assertOk()
+            ->assertJsonStructure([
+                'node_id', 'node_secret', 'node_name', 'ws_path', 'pin_sha256',
+                'jwt_issuer', 'jwt_audience', 'heartbeat_interval_seconds',
+                'telemetry_interval_seconds', 'config_revision', 'message',
+            ]);
+
+        $this->assertStringStartsWith('nd_', $response->json('node_id'));
+        $this->assertStringStartsWith('nds_', $response->json('node_secret'));
+        // config_revision is a Go string, not an int.
+        $this->assertIsString($response->json('config_revision'));
+        $this->assertSame('/api/v1/agent/control', $response->json('ws_path'));
+
+        $node = Node::query()->where('node_id', $response->json('node_id'))->firstOrFail();
+        $this->assertSame('hk-edge-1', $node->name);
+        $this->assertSame('a1b2c3d4e5f6', $node->meta['machine_id']);
+        $this->assertSame('2.6.0', $node->version);
+        $this->assertSame('1.0.0', $node->agent_version);
+        $this->assertSame('agent-v1', $node->meta['enroll_contract']);
+
+        // The issued secret is immediately usable on the native signed API.
+        $this->agentCall($node, 'POST', '/api/agent/v1/heartbeat', ['version' => '2.6.0'])->assertOk();
+
+        // ...and the one-shot token is spent.
+        $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain))->assertStatus(401);
+    }
+
+    public function test_token_may_come_from_the_x_enroll_token_header(): void
+    {
+        [, $plain] = EnrollToken::issue();
+
+        $this->postJson('/api/v1/agent/enroll', ['hostname' => 'sg-edge-1', 'arch' => 'arm64'], [
+            'X-Enroll-Token' => $plain,
+        ])->assertOk()->assertJsonPath('node_name', 'sg-edge-1');
+    }
+
+    public function test_invalid_expired_and_exhausted_tokens_are_401(): void
+    {
+        $this->postJson('/api/v1/agent/enroll', ['hostname' => 'x'])->assertStatus(401)
+            ->assertJsonPath('error', 'invalid_token');
+
+        $this->postJson('/api/v1/agent/enroll', $this->agentPayload('enr_nope'))->assertStatus(401);
+
+        [, $expired] = EnrollToken::issue(['expires_at' => now()->subDay()]);
+        $this->postJson('/api/v1/agent/enroll', $this->agentPayload($expired))->assertStatus(401);
+
+        [, $used] = EnrollToken::issue(['max_uses' => 1, 'uses' => 1]);
+        $this->postJson('/api/v1/agent/enroll', $this->agentPayload($used))->assertStatus(401);
+
+        $this->assertSame(0, Node::query()->count());
+    }
+
+    public function test_duplicate_machine_id_is_409_and_replace_true_reissues_credentials(): void
+    {
+        [, $first] = EnrollToken::issue();
+        $created = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($first))->assertOk();
+        $nodeId = $created->json('node_id');
+        $oldSecret = $created->json('node_secret');
+
+        [, $second] = EnrollToken::issue();
+
+        // Second enroll for the same machine: refused with the existing node id.
+        $this->postJson('/api/v1/agent/enroll', $this->agentPayload($second))
+            ->assertStatus(409)
+            ->assertJsonPath('error', 'node_exists')
+            ->assertJsonPath('node_id', $nodeId);
+
+        $this->assertSame(1, Node::query()->count());
+
+        // replace: true reissues the secret and invalidates the old one.
+        $replaced = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($second, ['replace' => true]))
+            ->assertOk()
+            ->assertJsonPath('node_id', $nodeId);
+
+        $newSecret = $replaced->json('node_secret');
+        $this->assertNotSame($oldSecret, $newSecret);
+
+        $node = Node::query()->where('node_id', $nodeId)->firstOrFail();
+        $this->assertSame($newSecret, $node->plainSecret());
+        $this->assertFalse(SignatureVerifier::verify(
+            \Illuminate\Http\Request::create('/api/agent/v1/heartbeat', 'POST'),
+            $node,
+            '',
+            'deadbeef',
+        ));
+    }
+
+    public function test_token_self_check_verifies_a_locally_signed_jwt(): void
+    {
+        [, $plain] = EnrollToken::issue();
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain))->assertOk();
+
+        $nodeId = $enrolled->json('node_id');
+        $secret = $enrolled->json('node_secret');
+
+        // The agent signs locally: HMAC key = node_secret, subject = node_id.
+        $jwt = Jwt::encode([
+            'iss' => 'hysteria-agent',
+            'aud' => 'hysteria-control-plane',
+            'sub' => $nodeId,
+            'iat' => now()->getTimestamp(),
+            'exp' => now()->addHour()->getTimestamp(),
+        ], $secret);
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->getJson('/api/v1/agent/token')
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('node_id', $nodeId)
+            ->assertJsonPath('ws_path', '/api/v1/agent/control')
+            ->assertJsonStructure(['control_channel' => ['channel', 'reverb_url', 'ws_auth'], 'endpoints' => ['heartbeat']]);
+
+        // Wrong signing key -> 401.
+        $forged = Jwt::encode(['sub' => $nodeId, 'exp' => now()->addHour()->getTimestamp()], 'nds_forged');
+        $this->withHeaders(['Authorization' => 'Bearer ' . $forged])
+            ->getJson('/api/v1/agent/token')
+            ->assertStatus(401);
+
+        // Expired token -> 401.
+        $stale = Jwt::encode(['sub' => $nodeId, 'exp' => now()->subMinute()->getTimestamp()], $secret);
+        $this->withHeaders(['Authorization' => 'Bearer ' . $stale])
+            ->getJson('/api/v1/agent/token')
+            ->assertStatus(401);
+    }
+
+    public function test_token_self_check_accepts_the_raw_secret_for_manual_probes(): void
+    {
+        [, $plain] = EnrollToken::issue();
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain))->assertOk();
+
+        $this->getJson('/api/v1/agent/token?key=' . $enrolled->json('node_secret'))
+            ->assertOk()
+            ->assertJsonPath('node_id', $enrolled->json('node_id'));
+    }
+
+    public function test_control_channel_reports_json_501_with_working_alternatives(): void
+    {
+        [, $plain] = EnrollToken::issue();
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain))->assertOk();
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer ' . Jwt::encode(['sub' => $enrolled->json('node_id')], $enrolled->json('node_secret')),
+            'Upgrade' => 'websocket',
+        ])->getJson('/api/v1/agent/control');
+
+        $response->assertStatus(501)
+            ->assertJsonPath('error', 'control_channel_not_implemented')
+            ->assertJsonStructure(['alternatives' => ['rest', 'reverb', 'go_control_plane']]);
+    }
+
+    public function test_unknown_api_paths_answer_json_not_html(): void
+    {
+        $response = $this->get('/api/v1/agent/does-not-exist');
+
+        $response->assertStatus(404);
+        $this->assertStringContainsString('application/json', (string) $response->headers->get('Content-Type'));
+        $response->assertJsonPath('error', 'not_found');
+
+        // A wrong method on a real endpoint is JSON too.
+        $this->postJson('/api/agent/v1/ping')->assertStatus(405)->assertJsonPath('error', 'method_not_allowed');
+    }
+}

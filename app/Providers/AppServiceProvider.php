@@ -76,5 +76,9 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('admin-login', static fn (Request $request) => Limit::perMinute(10)
             ->by('admin-login:' . $request->ip()));
+
+        // /api/v1/agent/{token,control} — keyed by credential when present.
+        RateLimiter::for('agent-v1', static fn (Request $request) => Limit::perMinute(300)
+            ->by('agent-v1:' . (string) ($request->bearerToken() ?: $request->ip())));
     }
 }

@@ -61,6 +61,47 @@ print(urllib.request.urlopen(req).read().decode())
 
 ---
 
+## 1.5 hysteria-agent 兼容面（`/api/v1/agent/*`）
+
+`hysteria-agent` 客户端按自己的 `DESIGN.md §5.1` 打 `/api/v1/agent/*`（路径可在
+`control.enroll_path` / `control.token_path` / `control.ws_path` 配置）。本控制面同时提供这一层，
+字段名与 agent 的 Go struct（`internal/enroll/*.go`）逐一对齐，两边走同一套 Service 与表，
+所以从哪条路径注册的节点都会出现在面板里。
+
+| Method | Endpoint | 说明 |
+|---|---|---|
+| POST | `/api/v1/agent/enroll` | `{enroll_token, hostname, node_name, os, arch, kernel, machine_id, boot_id, agent_version, hysteria_version, protocol, replace}`；也接受 `X-Enroll-Token` 头 |
+| GET | `/api/v1/agent/token` | 可选自检：`Authorization: Bearer <JWT>`（agent 用 `node_secret` 本地 HS256 自签，`sub`=node_id）或 `?key=<node_secret>` |
+| GET/POST | `/api/v1/agent/control` | agent 的二进制 Envelope 长连接通道；本面返回 **501 JSON** + 可用替代（见下） |
+
+enroll 响应（严格按 agent 契约，注意 `config_revision` 是**字符串**）：
+
+```json
+{ "node_id": "nd_…", "node_secret": "nds_…", "node_name": "hk-edge-1",
+  "control_url": "https://cp.example.com", "ws_path": "/api/v1/agent/control",
+  "pin_sha256": [], "jwt_issuer": "…", "jwt_audience": "hysteria-agent",
+  "heartbeat_interval_seconds": 30, "telemetry_interval_seconds": 15,
+  "config_revision": "3", "message": "注册成功。" }
+```
+
+错误语义与 agent 约定一致：缺令牌/无效/已用/过期 → **401**；同一 `machine_id`（或同名）已注册且未带
+`replace: true` → **409** `node_exist`+`node_id`；`replace: true` 会轮换该节点密钥并作废旧密钥。
+注册后拿到的 `node_secret` 可直接用于原生 HMAC 接口（`/api/agent/v1/heartbeat` 等）。
+
+**关于 `/api/v1/agent/control`**：agent 用 protobuf Envelope 二进制帧 + 服务端 Ping/Pong 的长连接，
+php-fpm / `artisan serve` 无法终结这种连接（agent 自己的 DESIGN.md §5.1 也是这个结论）。三个可选落地：
+
+1. **REST 替代**：用本面原生 `/api/agent/v1/*`（HMAC 签名，心跳/配置/指令/指标全都有）；
+   agent 客户端若没有 REST 传输模式，则不适用；
+2. **Reverb 推送**：面板与第三方走 `private-node.{node_id}` 频道（`/api/agent/v1/broadcasting/auth` 签名）；
+3. **分工拓扑（推荐给 Go agent）**：Go 控制面独占 `/api/v1/agent/*`（含该 WS），Laravel 面板继续做
+   UI/审计/管理 API，两者共享同一个 MySQL。
+
+另外：**`/api/*` 的所有 404/405 现在都返回 JSON**（`{"error":"not_found", …}`），
+不会再出现“打错路径却收到 HTML 404 页”这种难排查的形态。
+
+---
+
 ## 2. Agent API
 
 ### POST /api/agent/v1/enroll （无需签名，按 IP 限流）

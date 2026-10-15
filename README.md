@@ -51,7 +51,7 @@ php artisan serve --port=8088        # 本地快速体验
 |---|---|
 | 管理后台 | `/admin`（默认 `admin@example.com` / `password`） |
 | OpenAPI UI | `/docs/api`（机器可读：`/docs/api.json`） |
-| Agent API | `/api/agent/v1/*` |
+| Agent API | `/api/agent/v1/*`（原生） / `/api/v1/agent/*`（hysteria-agent 契约兼容面） |
 | 管理 API | `/api/admin/v1/*`（Sanctum Bearer） |
 | WebSocket | `wss://<host>/app/<REVERB_APP_KEY>` |
 
