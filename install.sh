@@ -72,7 +72,6 @@ cd "$APP_DIR"
 if [ ! -f .env ]; then
     log "creating .env from .env.example"
     cp .env.example .env
-    "$PHP_BIN" artisan key:generate --force >/dev/null
 fi
 
 set_env() {
@@ -126,6 +125,12 @@ if [ "$UPGRADE_ONLY" -eq 0 ]; then
 else
     log "updating composer dependencies"
     COMPOSER_ALLOW_SUPERUSER=1 composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader
+fi
+
+# APP_KEY must exist before any Crypt/encryption work (node secrets, sessions).
+if ! grep -qE '^APP_KEY=base64:.+' .env; then
+    log "generating application key"
+    "$PHP_BIN" artisan key:generate --force
 fi
 
 log "running migrations"
