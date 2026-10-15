@@ -47,7 +47,7 @@ class ManageSettings extends Page implements HasForms
             'node_domain' => Setting::get('node_domain', 'example.com'),
             'panel_footer' => Setting::get('panel_footer', 'Hysteria2 Control Plane'),
             'default_config_template' => Setting::get('default_config_template', ''),
-            'hysteria_auth_url' => Setting::get('hysteria_auth_url', 'http://auth.ipx.sarl'),
+            'hysteria_auth_url' => Setting::get('hysteria_auth_url', 'https://auth.ipx.sarl'),
             'hysteria_auth_insecure' => (bool) Setting::get('hysteria_auth_insecure', false),
         ]);
     }
@@ -85,7 +85,7 @@ class ManageSettings extends Page implements HasForms
                         ->label('HTTP 鉴权地址')
                         ->url()
                         ->required()
-                        ->helperText('节点上的 auth.type=http 会指向这里；用户是否可用由该服务回答。'),
+                        ->helperText('节点上的 auth.type=http 会指向这里；用户是否可用由该服务回答。建议 https：鉴权请求带用户凭据，明文 http 会被 agent 侧报警告。'),
                     Forms\Components\Toggle::make('hysteria_auth_insecure')
                         ->label('跳过鉴权地址的证书校验')
                         ->helperText('对应 auth.http.insecure。默认关闭；只有自签证书的私网后端才该打开。'),

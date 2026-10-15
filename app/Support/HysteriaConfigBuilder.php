@@ -13,7 +13,8 @@ use Symfony\Component\Yaml\Yaml;
  * The template is plain YAML in which the placeholders below are substituted.
  * {{node_id}} {{node_name}} {{region}} {{node_domain}} {{listen_port}}
  * {{stats_secret}} {{obfs_password}} {{cert_path}} {{key_path}} {{masquerade}}
- * {{auth_url}} {{auth_insecure}}（auth.type=http 用；insecure 只是跳过该 URL 的证书校验）
+ * {{auth_url}} {{auth_insecure}}（auth.type=http 用；insecure 只是跳过该 URL 的证书校验。）
+ * 默认用 https：鉴权请求带用户凭据，明文 http 不允许作为默认值。
  */
 final class HysteriaConfigBuilder
 {
@@ -71,7 +72,7 @@ final class HysteriaConfigBuilder
 
         $replacements = array_merge([
             // HTTP 鉴权后端：用户在 auth 服务里是否可用，由它回答（Hysteria 会转发鉴权请求）。
-            '{{auth_url}}' => (string) Setting::get('hysteria_auth_url', 'http://auth.ipx.sarl'),
+            '{{auth_url}}' => (string) Setting::get('hysteria_auth_url', 'https://auth.ipx.sarl'),
             '{{auth_insecure}}' => Setting::get('hysteria_auth_insecure', false) ? 'true' : 'false',
             '{{node_id}}' => $node->node_id,
             '{{node_name}}' => $node->name,

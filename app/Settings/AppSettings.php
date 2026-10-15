@@ -34,8 +34,11 @@ class AppSettings extends Settings
      * 节点上用 `auth.http.url` 指向它，用户是否可用由该服务决定（Hysteria 会把鉴权请求
      * 原样转发过去）。`insecure: true` 表示跳过该 URL 的证书校验 —— 默认 false，
      * 只有自签证书的私网后端才应该打开。
+     *
+     * 用 https：鉴权请求会带用户凭据，明文 http 等于把凭据交给链路上的任何人。
+     * 证书由 Cloudflare/反代在边缘终止，源站仍可以是 http://127.0.0.1:<port>。
      */
-    public string $hysteria_auth_url = 'http://auth.ipx.sarl';
+    public string $hysteria_auth_url = 'https://auth.ipx.sarl';
 
     public bool $hysteria_auth_insecure = false;
 

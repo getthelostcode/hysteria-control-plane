@@ -61,7 +61,7 @@ class HysteriaConfigBuilderTest extends TestCase
         ));
 
         $this->assertSame('http', $parsed['auth']['type']);
-        $this->assertSame('http://auth.ipx.sarl', $parsed['auth']['http']['url']);
+        $this->assertSame('https://auth.ipx.sarl', $parsed['auth']['http']['url'], '默认必须是 https：鉴权请求带用户凭据');
         $this->assertFalse($parsed['auth']['http']['insecure'], 'insecure 默认必须是 false（校验鉴权后端证书）');
 
         // trafficStats 仍要在：踢人与遥测都依赖它
@@ -85,7 +85,7 @@ class HysteriaConfigBuilderTest extends TestCase
         $this->assertSame('https://auth.example.com/hysteria', $parsed['auth']['http']['url']);
         $this->assertTrue($parsed['auth']['http']['insecure']);
 
-        Setting::setMany(['hysteria_auth_url' => 'http://auth.ipx.sarl', 'hysteria_auth_insecure' => false]);
+        Setting::setMany(['hysteria_auth_url' => 'https://auth.ipx.sarl', 'hysteria_auth_insecure' => false]);
         app()->forgetInstance(\App\Settings\AppSettings::class);
     }
 }

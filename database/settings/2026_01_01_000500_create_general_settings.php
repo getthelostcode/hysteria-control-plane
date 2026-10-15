@@ -18,7 +18,7 @@ return new class extends SettingsMigration
         $this->migrator->add('general.metrics_retention_days', 30);
         $this->migrator->add('general.node_domain', 'node.example.com');
         $this->migrator->add('general.default_config_template', '');
-        $this->migrator->add('general.hysteria_auth_url', 'http://auth.ipx.sarl');
+        $this->migrator->add('general.hysteria_auth_url', 'https://auth.ipx.sarl');
         $this->migrator->add('general.hysteria_auth_insecure', false);
         $this->migrator->add('general.panel_footer', 'Hysteria2 Control Plane');
     }
