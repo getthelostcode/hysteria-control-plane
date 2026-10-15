@@ -88,4 +88,24 @@ class HysteriaConfigBuilderTest extends TestCase
         Setting::setMany(['hysteria_auth_url' => 'https://auth.ipx.sarl', 'hysteria_auth_insecure' => false]);
         app()->forgetInstance(\App\Settings\AppSettings::class);
     }
+
+    /**
+     * 收养已有节点：节点上那份配置里的 trafficStats.secret 是固定的，
+     * 面板派生的值不一样 → agent 的一致性校验会拒收整份配置。要用 meta 覆盖。
+     */
+    public function test_stats_secret_can_be_adopted_from_the_existing_node_config(): void
+    {
+        $node = new \App\Models\Node([
+            'node_id' => 'nd_adopt', 'name' => 'adopt', 'secret_hash' => str_repeat('a', 64),
+        ]);
+
+        $derived = $node->statsSecret();
+        $this->assertSame($derived, $node->statsSecret(), '派生值应当稳定');
+
+        $node->meta = ['stats_secret' => '9da0f1431930a0e9ded898ed4e6663c6dea707df034268f8'];
+        $this->assertSame('9da0f1431930a0e9ded898ed4e6663c6dea707df034268f8', $node->statsSecret());
+
+        $node->meta = ['stats_secret' => '   '];
+        $this->assertSame($derived, $node->statsSecret(), '空白覆盖值应被忽略');
+    }
 }

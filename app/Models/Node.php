@@ -209,8 +209,21 @@ class Node extends Model implements AuditableContract
     }
 
     /** Deterministic secrets derived from the node secret (rotation invalidates them). */
+    /**
+     * trafficStats.secret：默认按 node_id 派生（同一节点永远算得出同一个值）。
+     *
+     * 但**收养已存在的节点**时不能派生：节点上那份配置里已经有一个固定的 secret，
+     * 而 agent 会硬性校验「配置里的 trafficStats.secret == 自己配置里的 hysteria.api_secret」，
+     * 不一致就直接拒绝整份配置。所以允许用 `meta.stats_secret` 覆盖成节点上真实的值。
+     */
     public function statsSecret(): string
     {
+        $override = $this->meta['stats_secret'] ?? null;
+
+        if (is_string($override) && trim($override) !== '') {
+            return trim($override);
+        }
+
         return substr(hash_hmac('sha256', 'stats:' . $this->node_id, $this->secret_hash), 0, 32);
     }
 
