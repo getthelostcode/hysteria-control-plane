@@ -67,6 +67,34 @@ class AdminApiTest extends TestCase
         $this->getJson('/api/admin/v1/nodes?per_page=1')->assertOk()->assertJsonPath('meta.per_page', 1);
     }
 
+    public function test_node_detail_exposes_meta_but_never_secret_material(): void
+    {
+        $this->actingAs($this->adminUser());
+
+        $node = Node::factory()->create([
+            'meta' => [
+                'protocol' => 'bridge/v1',
+                'enroll_contract' => 'agent-v1',
+                'kernel' => '6.17.2-1-pve',
+                // 这几项必须被 publicMeta() 过滤掉，否则会随 API 泄露。
+                'demo_secret' => 'nds_should_never_leak',
+                'api_token' => 'tok_should_never_leak',
+                'dashboard_password' => 'pw_should_never_leak',
+            ],
+        ]);
+
+        $payload = $this->getJson("/api/admin/v1/nodes/{$node->node_id}")
+            ->assertOk()
+            ->assertJsonPath('data.meta.protocol', 'bridge/v1')
+            ->assertJsonPath('data.meta.enroll_contract', 'agent-v1')
+            ->json('data.meta');
+
+        $this->assertArrayNotHasKey('demo_secret', $payload);
+        $this->assertArrayNotHasKey('api_token', $payload);
+        $this->assertArrayNotHasKey('dashboard_password', $payload);
+        $this->assertStringNotContainsString('should_never_leak', json_encode($payload, JSON_THROW_ON_ERROR));
+    }
+
     public function test_node_detail_exposes_latest_metric_and_config(): void
     {
         $this->actingAs($this->adminUser());

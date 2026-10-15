@@ -23,6 +23,9 @@ class NodeResource extends JsonResource
             'tags' => $this->tags ?? [],
             'version' => $this->version,
             'agent_version' => $this->agent_version,
+            // 通道/契约元数据（e.g. protocol=bridge/v1 表示经 Go 控制面桥接接入）。
+            // 过滤掉疑似凭据的键：meta 是 agent 上报的自由结构，历史上被 seeder 塞过 demo secret。
+            'meta' => $this->publicMeta(),
             'enrolled_at' => $this->enrolled_at?->toIso8601String(),
             'last_seen_at' => $this->last_seen_at?->toIso8601String(),
             'config_version' => $this->whenLoaded('latestConfig', fn () => $this->latestConfig?->version),

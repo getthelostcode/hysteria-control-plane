@@ -125,8 +125,10 @@ class AgentV1Controller extends Controller
             'node_name' => $node->name,
             'status' => $node->status,
             'ws_path' => self::WS_PATH,
-            'jwt_issuer' => (string) Setting::get('brand_name', 'hysteria-control-plane'),
-            'jwt_audience' => 'hysteria-agent',
+            // 与 agent 侧的 creds.DefaultIssuer/DefaultAudience 对齐：agent 用它自签
+            // 通道 JWT，控制面按同一组值校验，值不一致就是 401。
+            'jwt_issuer' => 'hysteria-agent',
+            'jwt_audience' => 'hysteria-control',
             'token_ttl_seconds' => 3600,
             'heartbeat_interval_seconds' => (int) Setting::get('heartbeat_interval', 30),
             'telemetry_interval_seconds' => 15,
@@ -282,8 +284,9 @@ class AgentV1Controller extends Controller
             'control_url' => rtrim((string) config('agent.public_url'), '/'),
             'ws_path' => self::WS_PATH,
             'pin_sha256' => [],
-            'jwt_issuer' => (string) Setting::get('brand_name', 'hysteria-control-plane'),
-            'jwt_audience' => 'hysteria-agent',
+            // 见上面 /token 的说明：这组值必须与 agent 侧的 creds.Default* 一致。
+            'jwt_issuer' => 'hysteria-agent',
+            'jwt_audience' => 'hysteria-control',
             'heartbeat_interval_seconds' => (int) Setting::get('heartbeat_interval', 30),
             'telemetry_interval_seconds' => 15,
             // Go type is string — must not be sent as an integer.

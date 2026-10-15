@@ -79,7 +79,7 @@ enroll 响应（严格按 agent 契约，注意 `config_revision` 是**字符串
 ```json
 { "node_id": "nd_…", "node_secret": "nds_…", "node_name": "hk-edge-1",
   "control_url": "https://cp.example.com", "ws_path": "/api/v1/agent/control",
-  "pin_sha256": [], "jwt_issuer": "…", "jwt_audience": "hysteria-agent",
+  "pin_sha256": [], "jwt_issuer": "hysteria-agent", "jwt_audience": "hysteria-control",
   "heartbeat_interval_seconds": 30, "telemetry_interval_seconds": 15,
   "config_revision": "3", "message": "注册成功。" }
 ```
@@ -113,6 +113,14 @@ php-fpm / `artisan serve` 无法终结这种连接（agent 自己的 DESIGN.md �
 * 本面需要的改动只有：`NodeCommand::TYPES` 增加 6 个 agent 原生类型
   （`tail_logs` / `get_state` / `cancel_tail` / `rollback_config` / `self_restart` / `clear_outbox`）、
   危险类型的限权，以及可选的通道标记（`nodes.meta.protocol = bridge/v1`）。**不需要新表、新 agent 接口。**
+
+> `jwt_issuer` / `jwt_audience` 必须与 agent 侧 `internal/creds` 的
+> `DefaultIssuer`(`hysteria-agent`) / `DefaultAudience`(`hysteria-control`) 一致：agent 用这对值
+> 自签控制通道 JWT，控制面再按同一组值校验。值不一致的表现是 **WS 握手 401**（agent 只报
+> "bad handshake"），排查成本高 —— 改这两个字段前先看 `internal/creds/creds.go`。
+>
+> 节点详情 `GET /api/admin/v1/nodes/{node_id}` 会返回 `data.meta`（过滤掉含
+> secret/token/password/key/credential 的键），面板与脚本可据此识别接入通道。
 * 桥接器不直连 MySQL，只走本节上半部分的签名 REST，因此签名规范（路径不含查询串、gzip 签压缩后字节、
   nonce 一次性、TTL 300s）是两边唯一的强耦合点。
 

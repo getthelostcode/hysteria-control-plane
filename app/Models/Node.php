@@ -147,6 +147,27 @@ class Node extends Model implements AuditableContract
 
     // ----------------------------------------------------------------- helpers
 
+    /**
+     * meta 中可对外暴露的部分：剔除疑似凭据的键。
+     * meta 是 agent / 桥接控制面写入的自由结构，直接吐出去容易把 secret 带进 API 响应。
+     *
+     * @return array<string, mixed>
+     */
+    public function publicMeta(): array
+    {
+        $meta = $this->meta;
+
+        if (! is_array($meta)) {
+            return [];
+        }
+
+        return array_filter(
+            $meta,
+            static fn ($_, string $key): bool => preg_match('/secret|token|password|passwd|key|credential/i', $key) !== 1,
+            ARRAY_FILTER_USE_BOTH,
+        );
+    }
+
     public function isOnline(): bool
     {
         if ($this->status !== self::STATUS_ONLINE) {
