@@ -30,6 +30,14 @@ Route::get('token', [AgentV1Controller::class, 'token'])
 | 降级到这个端点 —— 否则节点除注册外与控制面再无任何往来，面板「最后心跳」永远停在注册时刻。
 | 鉴权与 /control 相同：Authorization: Bearer <node_secret 自签的 JWT> 或 ?key=<node_secret>。
 */
+Route::get('config/latest', [AgentV1Controller::class, 'configLatest'])
+    ->middleware('throttle:agent-v1')
+    ->name('config.latest');
+
+Route::post('config/ack', [AgentV1Controller::class, 'configAck'])
+    ->middleware('throttle:agent-v1')
+    ->name('config.ack');
+
 Route::post('heartbeat', [AgentV1Controller::class, 'heartbeat'])
     ->middleware('throttle:agent-v1')
     ->name('heartbeat');

@@ -123,6 +123,90 @@ class AgentV1Controller extends Controller
      * `?key=` form is accepted for manual probes.
      */
     /**
+     * 配置下发（REST 兜底通道）。
+     *
+     * 本控制面终结不了二进制 WS 控制通道（/control 返回 501），所以直接连控制面的节点
+     * 只能靠 REST 拿配置 —— 没有这两个端点时，面板「发布配置」写进库就再无下文
+     * （真实现场：所有配置都是 published / applied_at 为空）。
+     *
+     * 鉴权与 /heartbeat、/token 相同：node_secret 自签的 JWT 或 ?key=<node_secret>。
+     */
+    public function configLatest(Request $request, ConfigService $configs): JsonResponse
+    {
+        $node = $this->authenticateChannel($request);
+
+        if ($node === null) {
+            return $this->error('unauthorized', '缺少或无效的凭据（Authorization: Bearer <node_secret 自签 JWT> 或 ?key=<node_secret>）。', 401);
+        }
+
+        // 拿配置就是「节点活着」的证据：顺带刷新存活（面板的「最后心跳」不应因为走 REST 就停住）
+        $this->nodes->markSeen($node, ['observed_ip' => PublicIp::fromRequest($request)]);
+
+        $config = $configs->latest($node);
+        $current = $request->integer('current_version', 0);
+
+        if ($config === null) {
+            return response()->json(['ok' => true, 'up_to_date' => true, 'config' => null]);
+        }
+
+        if ($current === (int) $config->version) {
+            return response()->json([
+                'ok' => true,
+                'up_to_date' => true,
+                'config' => ['version' => (int) $config->version, 'sha256' => $config->sha256],
+            ]);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'up_to_date' => false,
+            'config' => [
+                'version' => (int) $config->version,
+                'sha256' => $config->sha256,
+                'status' => $config->status,
+                'revision' => (string) $config->version,
+                'content_yaml' => $config->content_yaml,
+                'published_at' => $config->published_at?->toIso8601String(),
+            ],
+        ]);
+    }
+
+    /** 配置回执（REST 兜底通道）：applied / failed → 与原生通道共用 ConfigService 的判定与回滚。 */
+    public function configAck(Request $request, ConfigService $configs): JsonResponse
+    {
+        $node = $this->authenticateChannel($request);
+
+        if ($node === null) {
+            return $this->error('unauthorized', '缺少或无效的凭据。', 401);
+        }
+
+        $data = $request->validate([
+            'version' => ['required', 'integer', 'min:1'],
+            'status' => ['required', 'string', 'max:16'],
+            'error' => ['nullable', 'string', 'max:2000'],
+            'applied_at' => ['nullable', 'string', 'max:64'],
+        ]);
+
+        $config = $configs->acknowledge(
+            $node,
+            (int) $data['version'],
+            (string) $data['status'],
+            $data['error'] ?? null,
+            ['agent_reported_at' => $data['applied_at'] ?? now()->toIso8601String(), 'channel' => 'rest-fallback'],
+        );
+
+        $this->nodes->markSeen($node, ['observed_ip' => PublicIp::fromRequest($request)]);
+
+        return response()->json([
+            'ok' => true,
+            'version' => (int) $config->version,
+            'status' => $config->status,
+            'rolled_back' => $config->status === NodeConfig::STATUS_FAILED,
+            'active_version' => $configs->latest($node->refresh()) === null ? null : (int) $configs->latest($node)?->version,
+        ]);
+    }
+
+    /**
      * REST 兜底心跳：控制通道端点不可用（PHP 终结不了二进制 WS）时 agent 会打到这里。
      *
      * 目的只有一个 —— 让面板的存活时间与状态反映真实情况。返回字段与 /token 同构，

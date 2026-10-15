@@ -297,4 +297,94 @@ class AgentV1CompatibilityTest extends TestCase
         $this->assertSame(\App\Models\Node::STATUS_ONLINE, $node->status);
         $this->assertTrue($node->last_seen_at->greaterThan(now()->subMinute()));
     }
+
+    /** 面板「发布配置」必须能被直接连控制面的节点取走（原来没有这条路径，配置永远是 published）。 */
+    public function test_rest_config_delivery_and_ack(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'rest-config-1',
+            'machine_id' => 'machine-rest-config-1',
+        ]))->assertOk();
+
+        $node = \App\Models\Node::query()->where('node_id', $enrolled->json('node_id'))->firstOrFail();
+        $jwt = Jwt::encode(['sub' => $node->node_id, 'exp' => now()->addHour()->getTimestamp()], $node->plainSecret());
+
+        // 还没发布过配置：明确回 up_to_date，节点不该去应用空配置
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->getJson('/api/v1/agent/config/latest?current_version=0')
+            ->assertOk()
+            ->assertJsonPath('up_to_date', true)
+            ->assertJsonPath('config', null);
+
+        $published = app(\App\Services\ConfigService::class)->publish($node, "listen: :443\n");
+
+        // 发布后：节点能拿到正文与 sha256
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->getJson('/api/v1/agent/config/latest?current_version=0')
+            ->assertOk()
+            ->assertJsonPath('up_to_date', false)
+            ->assertJsonPath('config.version', $published->version)
+            ->assertJsonPath('config.sha256', $published->sha256)
+            ->assertJsonPath('config.content_yaml', "listen: :443\n");
+
+        // 已经是最新版本：不再重复下发
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->getJson('/api/v1/agent/config/latest?current_version=' . $published->version)
+            ->assertOk()
+            ->assertJsonPath('up_to_date', true);
+
+        // 回执 applied → 面板状态跟着变，并刷新存活
+        $node->forceFill(['last_seen_at' => now()->subHour(), 'status' => \App\Models\Node::STATUS_OFFLINE])->save();
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->postJson('/api/v1/agent/config/ack', [
+                'version' => $published->version,
+                'status' => 'applied',
+                'applied_at' => now()->toIso8601String(),
+            ])
+            ->assertOk()
+            ->assertJsonPath('status', 'applied')
+            ->assertJsonPath('rolled_back', false)
+            ->assertJsonPath('active_version', $published->version);
+
+        $node->refresh();
+        $this->assertSame('applied', $published->refresh()->status);
+        $this->assertNotNull($published->applied_at);
+        $this->assertSame(\App\Models\Node::STATUS_ONLINE, $node->status);
+        $this->assertTrue($node->last_seen_at->greaterThan(now()->subMinute()));
+    }
+
+    public function test_rest_config_ack_failure_rolls_back(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'rest-config-2', 'machine_id' => 'machine-rest-config-2',
+        ]))->assertOk();
+
+        $node = \App\Models\Node::query()->where('node_id', $enrolled->json('node_id'))->firstOrFail();
+        $jwt = Jwt::encode(['sub' => $node->node_id, 'exp' => now()->addHour()->getTimestamp()], $node->plainSecret());
+
+        $configs = app(\App\Services\ConfigService::class);
+        $v1 = $configs->publish($node, "listen: :443\n");
+        $v2 = $configs->publish($node, "listen: :8443\n");
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->postJson('/api/v1/agent/config/ack', [
+                'version' => $v2->version, 'status' => 'failed', 'error' => '端口被占用',
+            ])
+            ->assertOk()
+            ->assertJsonPath('rolled_back', true);
+
+        $this->assertSame('failed', $v2->refresh()->status);
+        $this->assertSame('端口被占用', $v2->error);
+    }
+
+    public function test_rest_config_endpoints_require_credentials(): void
+    {
+        $this->getJson('/api/v1/agent/config/latest')->assertStatus(401)->assertJsonPath('error', 'unauthorized');
+        $this->postJson('/api/v1/agent/config/ack', ['version' => 1, 'status' => 'applied'])
+            ->assertStatus(401)->assertJsonPath('error', 'unauthorized');
+    }
 }
