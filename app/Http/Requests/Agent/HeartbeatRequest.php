@@ -21,6 +21,7 @@ class HeartbeatRequest extends FormRequest
             'agent_version' => ['nullable', 'string', 'max:32'],
             'uptime' => ['nullable', 'integer', 'min:0'],
             'ip' => ['nullable', 'ip'],
+            'public_ip' => ['nullable', 'ip'],   // agent 自报的公网出口地址（NAT/桥接下唯一可靠来源）
             'region' => ['nullable', 'string', 'max:64'],
             'tags' => ['nullable', 'array', 'max:16'],
             'meta' => ['nullable', 'array'],

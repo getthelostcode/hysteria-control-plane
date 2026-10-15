@@ -27,6 +27,9 @@ DB_PORT="${DB_PORT:-3306}"
 DB_USER="${DB_USER:-root}"
 DB_PASSWORD="${DB_PASSWORD:-}"
 APP_URL_VALUE="${APP_URL:-http://127.0.0.1:8080}"
+# 反向代理/隧道后面的部署必须设置：否则 $request->ip() 是代理自己的地址
+# （同机 cloudflared → 127.0.0.1），节点的 IP 列、审计日志的 IP 全都会是 127.0.0.1。
+TRUSTED_PROXIES_VALUE="${TRUSTED_PROXIES:-127.0.0.1,::1}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-password}"
 SERVICE_USER="${SERVICE_USER:-www-data}"
@@ -115,6 +118,7 @@ else
     set_env DB_PASSWORD "$DB_PASSWORD" force
 fi
 set_env APP_URL "$APP_URL_VALUE" force
+set_env TRUSTED_PROXIES "$TRUSTED_PROXIES_VALUE"
 set_env APP_ENV "${APP_ENV:-production}"
 set_env APP_DEBUG "${APP_DEBUG:-false}"
 set_env QUEUE_CONNECTION redis force

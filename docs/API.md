@@ -70,7 +70,7 @@ print(urllib.request.urlopen(req).read().decode())
 
 | Method | Endpoint | 说明 |
 |---|---|---|
-| POST | `/api/v1/agent/enroll` | `{enroll_token, hostname, node_name, os, arch, kernel, machine_id, boot_id, agent_version, hysteria_version, protocol, replace}`；也接受 `X-Enroll-Token` 头 |
+| POST | `/api/v1/agent/enroll` | `{enroll_token, hostname, node_name, os, arch, kernel, machine_id, boot_id, agent_version, hysteria_version, protocol, replace, public_ip}`；也接受 `X-Enroll-Token` 头。`public_ip` 是**节点自报的出口公网地址**：控制面在隧道/NAT 后只能看到代理地址，没有它面板就显示不了真实 IP |
 | GET | `/api/v1/agent/token` | 可选自检：`Authorization: Bearer <JWT>`（agent 用 `node_secret` 本地 HS256 自签，`sub`=node_id）或 `?key=<node_secret>` |
 | GET/POST | `/api/v1/agent/control` | agent 的二进制 Envelope 长连接通道；本面返回 **501 JSON** + 可用替代（见下） |
 

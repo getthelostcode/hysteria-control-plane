@@ -37,6 +37,9 @@ class AgentV1EnrollRequest extends FormRequest
             'replace' => ['nullable', 'boolean'],
             'region' => ['nullable', 'string', 'max:64'],
             'tags' => ['nullable', 'array', 'max:16'],
+            // agent 自报的公网出口地址（节点在 NAT/隧道后时，控制面只能看到对端代理地址）
+            'ip' => ['nullable', 'ip'],
+            'public_ip' => ['nullable', 'ip'],
         ];
     }
 
@@ -70,6 +73,9 @@ class AgentV1EnrollRequest extends FormRequest
             'protocol' => $validated['protocol'] ?? null,
             'region' => $validated['region'] ?? null,
             'tags' => $validated['tags'] ?? null,
+            // 节点自报的公网出口地址（此前在这里被丢掉，所以面板只能显示控制面观测到的
+            // 隧道地址 127.0.0.1 —— 这就是「节点 IP 全是 127.0.0.1」的第二个原因）
+            'public_ip' => $validated['public_ip'] ?? $validated['ip'] ?? null,
         ], static fn ($value) => $value !== null);
     }
 }

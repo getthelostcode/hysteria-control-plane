@@ -98,7 +98,10 @@ class AgentV1Controller extends Controller
             'name' => $attributes['node_name'] ?? 'node-' . strtolower(substr((string) $attributes['machine_id'], 0, 6)),
             'region' => $attributes['region'] ?? null,
             'tags' => $attributes['tags'] ?? null,
-            'ip' => $request->ip(),
+            // 这里**不要**再塞 $request->ip()：它是「控制面观测到的对端地址」，由第三个参数
+            // 单独传入（并留档在 enrolled_ip）。把观测地址混进「agent 自报」字段，会让
+            // PublicIp::resolve() 误判来源，也会把隧道的 127.0.0.1 当成公网地址写进 ip 列。
+            'public_ip' => $attributes['public_ip'] ?? null,
             'version' => $attributes['hysteria_version'] ?? null,
             'agent_version' => $attributes['agent_version'] ?? null,
             'arch' => $attributes['arch'] ?? null,
@@ -240,11 +243,26 @@ class AgentV1Controller extends Controller
         $meta['enroll_contract'] = 'agent-v1';
         $meta['enrolled_at'] = now()->toIso8601String();
 
-        $node->forceFill([
+        $public = \App\Support\PublicIp::resolve(
+            $attributes['public_ip'] ?? null,
+            \App\Support\PublicIp::fromRequest(request()),
+        );
+
+        $fill = [
             'meta' => $meta,
             'agent_version' => $attributes['agent_version'] ?? $node->agent_version,
             'version' => $attributes['hysteria_version'] ?? $node->version,
-        ])->save();
+        ];
+
+        // 重新注册（--replace）往往正是为了修 IP：能解析出地址就刷新，解析不出来**保持原值**
+        // （曾经这里无条件写入，把内网节点的 ip 冲成了 null）。
+        if ($public['ip'] !== null) {
+            $fill['ip'] = $public['ip'];
+            $meta['ip_source'] = $public['source'];
+            $fill['meta'] = $meta;
+        }
+
+        $node->forceFill($fill)->save();
     }
 
     private function authenticateChannel(Request $request): ?Node

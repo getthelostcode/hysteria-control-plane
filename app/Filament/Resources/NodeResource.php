@@ -51,7 +51,10 @@ class NodeResource extends Resource
                     ->options(array_combine(Node::STATUSES, Node::STATUSES))
                     ->default(Node::STATUS_ONLINE)
                     ->required(),
-                Forms\Components\TextInput::make('ip')->label('IP')->maxLength(45),
+                Forms\Components\TextInput::make('ip')
+                ->label('公网 IP')
+                ->maxLength(45)
+                ->helperText('节点对外展示/排障用的公网地址。留空则等 agent 下一次上报自动填充。'),
                 Forms\Components\TextInput::make('region')->label('区域')->maxLength(64),
                 Forms\Components\TagsInput::make('tags')->label('标签')->columnSpanFull(),
             ]),
@@ -85,7 +88,14 @@ class NodeResource extends Resource
                     }),
                 Tables\Columns\TextColumn::make('region')->label('区域')->badge()->sortable()->searchable(),
                 Tables\Columns\TextColumn::make('tags')->label('标签')->badge()->separator(','),
-                Tables\Columns\TextColumn::make('ip')->label('IP')->copyable()->toggleable(),
+                Tables\Columns\TextColumn::make('ip')
+                    ->label('公网 IP')
+                    ->copyable()
+                    ->placeholder('未知')
+                    ->tooltip(fn (Node $record): ?string => ($record->meta['ip_source'] ?? null) === 'agent'
+                        ? '节点自报的出口公网地址'
+                        : (($record->meta['ip_source'] ?? null) === 'proxy' ? '由代理链（X-Forwarded-For）推导' : '控制面观测到的对端地址'))
+                    ->toggleable(),
                 Tables\Columns\TextColumn::make('latestMetric.cpu')
                     ->label('CPU')
                     ->suffix('%')

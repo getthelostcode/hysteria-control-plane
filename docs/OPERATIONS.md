@@ -75,3 +75,25 @@ Redis 仍然是必需的（限流/防重放/队列/会话）；只把数据库�
 * 面板「节点日志」聚合节点上报的 `error/warning/diagnostic`。
 * API 文档：`/docs/api`，机器可读 `/docs/api.json`（生产环境建议给 docs 路由加认证中间件，
   见 `config/scramble.php` 的 `middleware`）。
+
+## 节点 IP 显示为 127.0.0.1 怎么办
+
+控制面部署在反向代理/隧道后面（Cloudflare Tunnel、nginx、ALB）时，不做任何配置
+`$request->ip()` 返回的是**代理自己的地址**：同机跑 cloudflared 时就是 127.0.0.1。
+于是面板「公网 IP」列、审计日志的 IP 全是 127.0.0.1。
+
+1. `.env` 里设置 `TRUSTED_PROXIES`（默认 `127.0.0.1,::1` 已覆盖同机隧道场景；
+   多跳代理填上游网段，如 `10.0.0.0/8,172.16.0.0/12`；只有应用无法被直连时才用 `*`，
+   因为 `X-Forwarded-For` 可伪造）。
+2. 重启 PHP-FPM / dev server 让配置生效。
+
+取值优先级（见 `App\Support\PublicIp`）：
+
+| 来源 | 何时使用 | `nodes.meta.ip_source` |
+|---|---|---|
+| agent 自报 `public_ip` | 节点在 NAT/隧道后（桥接模式下 Laravel 只看到 Go 控制面的地址） | `agent` |
+| 代理链推导（X-Forwarded-For） | 请求经过可信代理 | `proxy` |
+| 观测到的对端地址 | 前两者都拿不到（内网部署） | `peer` |
+
+私网/回环地址**不会**覆盖已记录的公网地址（agent 上报内网地址是常态）。
+运维也可以直接在面板编辑节点，或 `PATCH /api/admin/v1/nodes/{node_id}` 手工修正 `ip`。

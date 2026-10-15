@@ -27,6 +27,7 @@ class EnrollRequest extends FormRequest
             'arch' => ['nullable', 'string', 'max:16'],
             'kernel' => ['nullable', 'string', 'max:64'],
             'ip' => ['nullable', 'ip'],
+            'public_ip' => ['nullable', 'ip'],   // agent 自报的公网出口地址（NAT/桥接下唯一可靠来源）
         ];
     }
 }

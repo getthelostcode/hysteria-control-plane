@@ -26,6 +26,22 @@ return Application::configure(basePath: dirname(__DIR__))
             'agent.auth' => AgentAuth::class,
             'agent.decode' => DecodeAgentPayload::class,
         ]);
+
+        // 没有这一段，部署在 Cloudflare Tunnel / nginx 后面时 $request->ip() 拿到的是代理自己的
+        // 地址（本机 cloudflared → 127.0.0.1），节点 IP、审计日志的 IP 全都是 127.0.0.1。
+        //
+        // 注意这里**必须用 env() 而不是 config()**：本闭包在内核解析阶段执行，那时容器里的
+        // config 还没就绪，`config()` 会抛「Target class [config] does not exist」，表现是
+        // **整个站点 500**（踩过）。默认值与 config/agent.php 保持一致，改一处要改两处。
+        $middleware->trustProxies(
+            at: env('TRUSTED_PROXIES', '127.0.0.1,::1'),
+            headers: Request::HEADER_X_FORWARDED_FOR
+                | Request::HEADER_X_FORWARDED_HOST
+                | Request::HEADER_X_FORWARDED_PORT
+                | Request::HEADER_X_FORWARDED_PROTO
+                | Request::HEADER_X_FORWARDED_PREFIX
+                | Request::HEADER_X_FORWARDED_AWS_ELB,
+        );
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (ConfigValidationException $exception, Request $request) {

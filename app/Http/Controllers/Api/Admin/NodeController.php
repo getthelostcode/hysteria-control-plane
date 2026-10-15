@@ -71,6 +71,8 @@ class NodeController extends Controller
             'region' => ['sometimes', 'nullable', 'string', 'max:64'],
             'tags' => ['sometimes', 'array', 'max:16'],
             'status' => ['sometimes', 'string', 'in:' . implode(',', Node::STATUSES)],
+            // 运维手工修正公网 IP 的逃生口（节点在无法被控制面观测到的网络里时）
+            'ip' => ['sometimes', 'nullable', 'ip'],
         ]);
 
         $node->fill($data)->save();

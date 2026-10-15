@@ -10,6 +10,7 @@ use App\Models\Node;
 use App\Models\NodeCredential;
 use App\Models\User;
 use App\Support\AuditLogger;
+use App\Support\PublicIp;
 use App\Support\SignatureVerifier;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -25,7 +26,11 @@ final class NodeService
      */
     public function enroll(EnrollToken $token, array $attributes, ?string $ip = null): array
     {
-        return DB::transaction(function () use ($token, $attributes, $ip): array {
+        // 节点要展示的地址：优先 agent 自报的公网 IP（NAT/桥接下唯一可靠来源），
+        // 其次是从代理链推导出的客户端地址，最后才是观测到的对端地址。
+        $public = PublicIp::resolve($attributes['public_ip'] ?? $attributes['ip'] ?? null, $ip);
+
+        return DB::transaction(function () use ($token, $attributes, $ip, $public): array {
             [$plain, $hash, $cipher] = SignatureVerifier::issueSecret();
 
             $node = Node::create([
@@ -34,7 +39,7 @@ final class NodeService
                 'secret_hash' => $hash,
                 'secret_ciphertext' => $cipher,
                 'status' => Node::STATUS_ONLINE,
-                'ip' => $attributes['ip'] ?? $ip,
+                'ip' => $public['ip'],
                 'region' => $attributes['region'] ?? $token->region_hint,
                 'tags' => $attributes['tags'] ?? $token->tags_hint ?? [],
                 'version' => $attributes['version'] ?? null,
@@ -43,7 +48,11 @@ final class NodeService
                     'arch' => $attributes['arch'] ?? null,
                     'kernel' => $attributes['kernel'] ?? null,
                     'enrolled_via' => 'api',
+                    // 地址来源：agent=节点自报公网 IP / proxy=代理链推导 / peer=只看到对端
+                    'ip_source' => $public['source'],
                 ],
+                // 观测到的对端地址单独留档：它可能是 cloudflared 的 127.0.0.1，
+                // 排障时能区分「节点换了 IP」和「请求没经过代理链」。
                 'enrolled_ip' => $ip,
                 'enrolled_at' => now(),
                 'last_seen_at' => now(),
@@ -61,8 +70,10 @@ final class NodeService
             AuditLogger::log('node.enrolled', $node, [
                 'node_id' => $node->node_id,
                 'token_prefix' => $token->prefix,
-                'ip' => $ip,
-            ], 'agent', $ip);
+                'ip' => $node->ip,
+                'ip_source' => $public['source'],
+                'observed_ip' => $ip,
+            ], 'agent', (string) $ip);
 
             return ['node' => $node, 'secret' => $plain];
         });
@@ -83,10 +94,23 @@ final class NodeService
         $previous = $node->status;
 
         $node->fill(array_filter([
-            'ip' => $attributes['ip'] ?? null,
             'version' => $attributes['version'] ?? null,
             'agent_version' => $attributes['agent_version'] ?? null,
         ], static fn ($value) => $value !== null));
+
+        // 地址来源优先级：agent 自报公网（NAT/桥接下唯一可靠）> 代理链推导（中间件传入）。
+        // 注意：agent 若上报私网/回环地址（内网部署很常见），**不能**覆盖已有的公网地址。
+        $reportedIp = $attributes['public_ip'] ?? $attributes['ip'] ?? null;
+
+        if (PublicIp::isPublic($reportedIp)) {
+            $node->ip = $reportedIp;
+
+            if (($node->meta['ip_source'] ?? null) !== 'agent') {
+                $node->meta = array_merge($node->meta ?? [], ['ip_source' => 'agent']);
+            }
+        } elseif (isset($attributes['ip']) && $node->ip === null) {
+            $node->ip = $attributes['ip'];
+        }
 
         if (isset($attributes['region'])) {
             $node->region = (string) $attributes['region'];
@@ -99,6 +123,7 @@ final class NodeService
         if (isset($attributes['meta']) && is_array($attributes['meta'])) {
             $node->meta = array_merge($node->meta ?? [], $attributes['meta']);
         }
+
 
         if ($node->status !== Node::STATUS_ONLINE) {
             $node->status = Node::STATUS_ONLINE;
