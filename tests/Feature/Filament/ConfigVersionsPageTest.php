@@ -42,8 +42,11 @@ class ConfigVersionsPageTest extends TestCase
         Livewire::test(ConfigVersions::class)
             ->assertSuccessful()
             ->assertCanSeeTableRecords([$a1, $a2, $b1])
-            ->assertSee('node-a')
-            ->assertSee('node-b');
+            // 第一列是版本（按先后顺序）；不显示节点列；发布时间与最后修改时间要显示
+            ->assertTableColumnExists('version')
+            ->assertTableColumnDoesNotExist('node.name')
+            ->assertTableColumnExists('published_at')
+            ->assertTableColumnExists('updated_at');
 
         // 每台节点当前默认下发的那一版都被标出来
         $this->assertTrue($a2->refresh()->is_current);
@@ -119,8 +122,12 @@ class ConfigVersionsPageTest extends TestCase
         $response = $this->get('/admin/config-versions');
 
         $response->assertOk();
-        $this->assertStringContainsString('配置版本管理', $response->getContent());
-        $this->assertStringContainsString('http-node', $response->getContent());
+        $contents = $response->getContent();
+        $this->assertStringContainsString('配置版本管理', $contents);
+        $this->assertStringContainsString('默认版本', $contents);
+        $this->assertStringContainsString('发布时间', $contents);
+        $this->assertStringContainsString('最后修改时间', $contents);
+        $this->assertStringNotContainsString('>节点<', $contents);
     }
 
     public function test_create_version_button_publishes_and_can_skip_becoming_default(): void
@@ -178,27 +185,31 @@ class ConfigVersionsPageTest extends TestCase
         $this->assertSame($v1->version, $configs->latest($node)?->version);
     }
 
-    public function test_list_shows_publish_and_modified_time_columns(): void
+    public function test_list_shows_version_first_and_time_columns_without_node(): void
     {
         $this->actingAs($this->adminUser());
 
         $node = Node::factory()->create(['name' => 'node-time']);
         $config = app(ConfigService::class)->publish($node, "listen: :443\n");
 
-        // 就地改一次，修改时间与创建时间才会分得开
+        // 就地改一次，这样「最后修改时间」与「发布时间」才分得开
         app(ConfigService::class)->updateContent($config, "listen: :443\n# touched\n");
 
         Livewire::test(ConfigVersions::class)
+            ->assertTableColumnExists('version')
             ->assertTableColumnExists('published_at')
             ->assertTableColumnExists('updated_at')
-            ->assertTableColumnExists('created_at')
+            ->assertTableColumnExists('applied_at')
             ->assertCanSeeTableRecords([$config->refresh()]);
 
-        // 真实 HTTP 渲染里也要能看到「修改时间」这一列
+        // 真实 HTTP 渲染：创建版本按钮、默认版本开关、发布时间、最后修改时间都在；节点列不在
         $response = $this->get('/admin/config-versions');
         $response->assertOk();
-        $this->assertStringContainsString('修改时间', $response->getContent());
-        $this->assertStringContainsString('创建版本', $response->getContent());
-        $this->assertStringContainsString('默认版本', $response->getContent());
+        $contents = $response->getContent();
+        $this->assertStringContainsString('创建版本', $contents);
+        $this->assertStringContainsString('默认版本', $contents);
+        $this->assertStringContainsString('发布时间', $contents);
+        $this->assertStringContainsString('最后修改时间', $contents);
+        $this->assertStringNotContainsString('>节点<', $contents);
     }
 }

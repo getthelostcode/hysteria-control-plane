@@ -138,7 +138,17 @@ class ConfigVersions extends Page implements HasActions, HasForms, HasTable
         // 复用资源里的列与行操作（单一来源，避免两处漂移）
         return NodeConfigResource::table($table)
             ->query(NodeConfig::query()->with('node'))
-            ->defaultSort('id', 'desc')
+            // 列：第一列是版本（按先后顺序）；不显示节点列；发布时间/最后修改时间要显示
+            ->columns([
+                NodeConfigResource::versionColumn(),
+                NodeConfigResource::currentVersionColumn(),
+                NodeConfigResource::statusColumn(),
+                NodeConfigResource::hashColumn(),
+                NodeConfigResource::publishedAtColumn(),
+                NodeConfigResource::updatedAtColumn(),
+                NodeConfigResource::appliedAtColumn(),
+            ])
+            ->defaultSort('version')
             ->paginationPageOptions([25, 50, 100])
             ->filters([
                 Tables\Filters\SelectFilter::make('node')
