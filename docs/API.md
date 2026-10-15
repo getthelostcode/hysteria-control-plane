@@ -102,6 +102,20 @@ php-fpm / `artisan serve` 无法终结这种连接（agent 自己的 DESIGN.md �
 
 ---
 
+## 1.8 桥接消费方：Go 控制面（hysteria-agent 原生通道）
+
+当 `hysteria-agent` 需要走自己的 Envelope WS 协议（`/api/v1/agent/control`，本面无法终结）时，
+由它的 Go 控制面终结该通道，并以「节点代理」身份调用本面的既有 Agent API（HMAC REST）——
+数据、审计、权限、面板全部仍然只在本面。
+
+* 设计文档（接口映射表、指令类型映射、时序图、降级、规模预算）：
+  `hysteria-agent` 仓库 `docs/BRIDGE-TO-CONTROL-PLANE.md`
+* 本面需要的改动只有：`NodeCommand::TYPES` 增加 6 个 agent 原生类型
+  （`tail_logs` / `get_state` / `cancel_tail` / `rollback_config` / `self_restart` / `clear_outbox`）、
+  危险类型的限权，以及可选的通道标记（`nodes.meta.protocol = bridge/v1`）。**不需要新表、新 agent 接口。**
+* 桥接器不直连 MySQL，只走本节上半部分的签名 REST，因此签名规范（路径不含查询串、gzip 签压缩后字节、
+  nonce 一次性、TTL 300s）是两边唯一的强耦合点。
+
 ## 2. Agent API
 
 ### POST /api/agent/v1/enroll （无需签名，按 IP 限流）
