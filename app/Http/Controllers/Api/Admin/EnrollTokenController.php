@@ -59,7 +59,9 @@ class EnrollTokenController extends Controller
 
         AuditLogger::log('enroll_token.revoked', $token, ['prefix' => $token->prefix], $request->user()?->name, $request->ip());
 
-        $token->forceFill(['expires_at' => now()->subSecond(), 'max_uses' => $token->uses])->save();
+        // 用 revoke()（打 revoked_at 标记）而不是伪造 expires_at/max_uses：
+        // 后者会让面板把「已作废」显示成「已用尽」，把「我主动撤的」和「有人用过」混起来。
+        $token->revoke();
 
         return response()->json(['ok' => true]);
     }

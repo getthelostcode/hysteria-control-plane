@@ -209,7 +209,13 @@ class AdminApiTest extends TestCase
         $this->getJson('/api/admin/v1/enroll-tokens')->assertOk()->assertJsonCount(1, 'data');
 
         $this->deleteJson("/api/admin/v1/enroll-tokens/{$token->id}")->assertOk();
-        $this->assertFalse($token->refresh()->isUsable());
+
+        $token->refresh();
+        $this->assertFalse($token->isUsable());
+        // 撤销要体现为「已作废」，而不是靠伪造 expires_at 变成「已用尽」
+        $this->assertTrue($token->isRevoked());
+        $this->assertSame('已作废', $token->statusLabel());
+        $this->assertSame(0, $token->uses);
     }
 
     public function test_upgrade_package_release_and_update(): void
