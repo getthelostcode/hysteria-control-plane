@@ -44,18 +44,75 @@ class ConfigFiles extends Page implements HasActions, HasForms, HasTable
 
     protected static string $view = 'filament.pages.config-files';
 
+    /** 顶部「当前默认版本」表单的状态。 */
+    public ?array $data = [];
+
     public static function canAccess(): bool
     {
         return auth()->user()?->can('view nodes') ?? false;
     }
 
+    public function mount(): void
+    {
+        $this->form->fill([
+            'default_version_id' => app(ConfigFileService::class)->default()?->getKey(),
+        ]);
+    }
+
     public function getSubheading(): ?string
     {
-        $current = app(ConfigFileService::class)->default();
+        return '与节点无关的配置版本文件：先在这里攒版本，再用下面的「当前默认版本」指定下发取哪一版。';
+    }
 
-        return $current === null
-            ? '与节点无关的配置版本文件：先在这里攒版本，下发时挑一份即可。'
-            : '与节点无关的配置版本文件；当前默认版本：' . $current->label() . '（下发时默认取它）。';
+    /** 顶部：当前默认版本（下拉 + 保存）。 */
+    public function form(Forms\Form $form): Forms\Form
+    {
+        return $form
+            ->schema([
+                Forms\Components\Select::make('default_version_id')
+                    ->label('当前默认版本')
+                    ->options(fn (): array => ConfigFile::query()
+                        ->orderByDesc('version')
+                        ->get()
+                        ->mapWithKeys(fn (ConfigFile $file): array => [
+                            $file->id => $file->label() . ($file->note !== '' ? ' · ' . $file->note : ''),
+                        ])
+                        ->all())
+                    ->placeholder('（还没有版本文件，先点右上角「创建版本」）')
+                    ->searchable()
+                    ->native(false)
+                    ->disabled(fn (): bool => ! (auth()->user()?->can('publish configs') ?? false))
+                    ->helperText('节点的配置同步（hysteria-agent config sync）默认取的就是这一版。')
+                    ->columnSpanFull(),
+            ])
+            ->statePath('data');
+    }
+
+    /** 保存默认版本：只挪指针，不产生新版本。 */
+    public function save(): void
+    {
+        $state = $this->form->getState();
+        $id = $state['default_version_id'] ?? null;
+
+        if (blank($id)) {
+            Notification::make()
+                ->title('请先选择要设为默认的版本')
+                ->warning()
+                ->send();
+
+            return;
+        }
+
+        $file = ConfigFile::query()->findOrFail($id);
+        $file = app(ConfigFileService::class)->setDefault($file, auth()->user(), '面板选择默认版本');
+
+        Notification::make()
+            ->title($file->label() . ' 已设为默认版本')
+            ->body('节点下次同步（config sync）就会取这一版。')
+            ->success()
+            ->send();
+
+        $this->form->fill(['default_version_id' => $file->getKey()]);
     }
 
     public function table(Table $table): Table
@@ -114,25 +171,6 @@ class ConfigFiles extends Page implements HasActions, HasForms, HasTable
                         Notification::make()
                             ->title($updated->label() . ' 正文已更新')
                             ->body('sha256 ' . $updated->shortHash())
-                            ->success()
-                            ->send();
-                    }),
-                Tables\Actions\Action::make('set_default')
-                    ->label('设为默认版本')
-                    ->icon('heroicon-o-star')
-                    ->color('success')
-                    ->visible(fn (ConfigFile $record): bool => (! $record->is_default)
-                        && (auth()->user()?->can('publish configs') ?? false))
-                    ->requiresConfirmation()
-                    ->modalDescription('设为默认版本：新建/采纳节点、以及下发时默认取用的就是它。')
-                    ->form([
-                        Forms\Components\TextInput::make('reason')->label('原因')->default('指定默认版本'),
-                    ])
-                    ->action(function (ConfigFile $record, array $data, ConfigFileService $files): void {
-                        $current = $files->setDefault($record, auth()->user(), (string) ($data['reason'] ?? ''));
-
-                        Notification::make()
-                            ->title($current->label() . ' 已设为默认版本')
                             ->success()
                             ->send();
                     }),

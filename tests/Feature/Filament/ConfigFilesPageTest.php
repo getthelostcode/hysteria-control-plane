@@ -88,9 +88,11 @@ class ConfigFilesPageTest extends TestCase
         $this->assertNotSame($before, $v2->sha256);
         $this->assertStringContainsString('v2 edited', (string) $v2->content_yaml);
 
-        // 指定默认版本
+        // 顶部「当前默认版本」下拉 + 保存
         Livewire::test(ConfigFiles::class)
-            ->callTableAction('set_default', $v2->refresh(), ['reason' => '用第二版']);
+            ->fillForm(['default_version_id' => $v2->refresh()->getKey()])
+            ->call('save')
+            ->assertHasNoFormErrors();
 
         $this->assertTrue($v2->refresh()->is_default);
         $this->assertFalse($v1->refresh()->is_default);
@@ -108,8 +110,35 @@ class ConfigFilesPageTest extends TestCase
         $contents = $response->getContent();
         $this->assertStringContainsString('配置版本文件', $contents);
         $this->assertStringContainsString('创建版本', $contents);
+        $this->assertStringContainsString('当前默认版本', $contents);
+        $this->assertStringContainsString('保存', $contents);
         $this->assertStringContainsString('发布时间', $contents);
         $this->assertStringContainsString('最后修改时间', $contents);
         $this->assertStringNotContainsString('>节点<', $contents);
+    }
+
+    /** 顶部「当前默认版本」下拉默认选中当前默认版本，保存后指针跟着走。 */
+    public function test_default_version_selector_is_prefilled_and_saved(): void
+    {
+        $this->actingAs($this->adminUser());
+        $files = app(ConfigFileService::class);
+
+        $v1 = $files->create("listen: :443\n", null, '第一版');
+        $v2 = $files->create("listen: :8443\n", null, '第二版');   // 默认 = v2
+
+        Livewire::test(ConfigFiles::class)
+            // 下拉预选当前默认版本（v2）
+            ->assertFormSet(['default_version_id' => $v2->getKey()])
+            ->assertSee('当前默认版本')
+            ->assertSee('保存')
+            // 改选 v1 并保存
+            ->fillForm(['default_version_id' => $v1->getKey()])
+            ->call('save')
+            ->assertHasNoFormErrors()
+            ->assertNotified('v1 已设为默认版本');
+
+        $this->assertTrue($v1->refresh()->is_default);
+        $this->assertFalse($v2->refresh()->is_default);
+        $this->assertSame($v1->version, $files->default()?->version);
     }
 }
