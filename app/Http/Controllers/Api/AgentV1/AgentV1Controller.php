@@ -13,6 +13,7 @@ use App\Services\ConfigService;
 use App\Services\NodeService;
 use App\Support\AuditLogger;
 use App\Support\Jwt;
+use App\Services\ConfigFileService;
 use App\Support\PublicIp;
 use App\Support\Setting;
 use Illuminate\Http\JsonResponse;
@@ -200,6 +201,60 @@ class AgentV1Controller extends Controller
                 'revision' => (string) $config->version,
                 'content_yaml' => $config->content_yaml,
                 'published_at' => $config->published_at?->toIso8601String(),
+            ],
+        ]);
+    }
+
+    /**
+     * 取「配置版本文件库」的默认版本（与节点无关的那份配置正文）。
+     *
+     * 与 configLatest 的区别：configLatest 给的是**这台节点**发布的第几版（node_configs），
+     * 这里给的是运维在「配置管理 → 版本管理」里指定的**默认版本文件**（config_files.is_default）。
+     * agent 的 `config sync` 默认走这条（`control.config_source: default`）。
+     */
+    public function configDefault(Request $request, ConfigFileService $files): JsonResponse
+    {
+        $node = $this->authenticateChannel($request);
+
+        if ($node === null) {
+            return $this->error('unauthorized', '缺少或无效的凭据（Authorization: Bearer <node_secret 自签 JWT> 或 ?key=<node_secret>）。', 401);
+        }
+
+        $this->nodes->markSeen($node, ['observed_ip' => PublicIp::fromRequest($request)]);
+
+        $file = $files->default();
+
+        if ($file === null) {
+            return response()->json([
+                'ok' => true,
+                'up_to_date' => true,
+                'config' => null,
+                'note' => '配置版本文件库里还没有默认版本。',
+            ]);
+        }
+
+        $current = $request->integer('current_version', 0);
+        $currentSha = trim((string) $request->input('current_sha256', ''));
+        $shaMatches = $currentSha === '' || hash_equals((string) $file->sha256, $currentSha);
+
+        if ($current === (int) $file->version && $shaMatches) {
+            return response()->json([
+                'ok' => true,
+                'up_to_date' => true,
+                'config' => ['version' => (int) $file->version, 'sha256' => $file->sha256],
+            ]);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'up_to_date' => false,
+            'config' => [
+                'version' => (int) $file->version,
+                'sha256' => $file->sha256,
+                'revision' => (string) $file->version,
+                'content_yaml' => $file->content_yaml,
+                'source' => 'config-file',
+                'note' => $file->note,
             ],
         ]);
     }

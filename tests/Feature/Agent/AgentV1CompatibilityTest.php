@@ -445,4 +445,71 @@ class AgentV1CompatibilityTest extends TestCase
         $this->assertArrayNotHasKey('stats_secret', $meta);
         $this->assertArrayNotHasKey('cert_path', $meta);
     }
+
+    /** config sync 默认按「配置版本文件库的默认版本」：新端点要能取到它。 */
+    public function test_default_config_endpoint_serves_the_library_default_version(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'lib-default', 'machine_id' => 'machine-lib-default',
+        ]))->assertOk();
+
+        $node = \App\Models\Node::query()->where('node_id', $enrolled->json('node_id'))->firstOrFail();
+        $jwt = Jwt::encode(['sub' => $node->node_id, 'exp' => now()->addHour()->getTimestamp()], $node->plainSecret());
+
+        $files = app(\App\Services\ConfigFileService::class);
+
+        // 库里还没有默认版本 → 明确的 up_to_date + config=null（节点不该乱动本地文件）
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->getJson('/api/v1/agent/config/default')
+            ->assertOk()
+            ->assertJsonPath('up_to_date', true)
+            ->assertJsonPath('config', null);
+
+        $file = $files->create("listen: :443\n# from library\n", null, '库默认版本');
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->getJson('/api/v1/agent/config/default')
+            ->assertOk()
+            ->assertJsonPath('up_to_date', false)
+            ->assertJsonPath('config.version', $file->version)
+            ->assertJsonPath('config.sha256', $file->sha256)
+            ->assertJsonPath('config.source', 'config-file')
+            ->assertJsonPath('config.content_yaml', "listen: :443\n# from library\n");
+
+        // 本机内容一致 → up_to_date
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->getJson('/api/v1/agent/config/default?current_version=' . $file->version . '&current_sha256=' . $file->sha256)
+            ->assertOk()
+            ->assertJsonPath('up_to_date', true);
+    }
+
+    /** 按库默认版本同步时，回执里的版本号在本节点没有对应行 —— 必须接受并记下来，而不是 404。 */
+    public function test_ack_accepts_a_version_that_came_from_the_library(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'lib-ack', 'machine_id' => 'machine-lib-ack',
+        ]))->assertOk();
+
+        $node = \App\Models\Node::query()->where('node_id', $enrolled->json('node_id'))->firstOrFail();
+        $jwt = Jwt::encode(['sub' => $node->node_id, 'exp' => now()->addHour()->getTimestamp()], $node->plainSecret());
+
+        $file = app(\App\Services\ConfigFileService::class)->create("listen: :8443\n", null, '库版本');
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->postJson('/api/v1/agent/config/ack', [
+                'version' => $file->version,
+                'status' => 'applied',
+                'applied_at' => now()->toIso8601String(),
+            ])
+            ->assertOk()
+            ->assertJsonPath('status', 'applied');
+
+        $this->assertDatabaseHas('node_configs', [
+            'node_id' => $node->id,
+            'version' => $file->version,
+            'status' => 'applied',
+        ]);
+    }
 }

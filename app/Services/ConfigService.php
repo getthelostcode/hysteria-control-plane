@@ -97,7 +97,33 @@ final class ConfigService
     /** @param array<string, mixed> $meta */
     public function acknowledge(Node $node, int $version, string $status, ?string $error = null, array $meta = []): NodeConfig
     {
-        $config = NodeConfig::query()->where('node_id', $node->id)->where('version', $version)->firstOrFail();
+        $config = NodeConfig::query()->where('node_id', $node->id)->where('version', $version)->first();
+
+        if ($config === null) {
+            // 只在「回执的版本号正好等于当前默认版本文件」时才接受 —— 那就是 agent 按文件库同步的结果，
+            // 补记一行让该节点的应用历史完整。其余未知版本号仍然 404（保持原有契约，别让脏回执进库）。
+            $default = app(ConfigFileService::class)->default();
+
+            if ($default === null || (int) $default->version !== $version) {
+                throw (new \Illuminate\Database\Eloquent\ModelNotFoundException())->setModel(NodeConfig::class, [$version]);
+            }
+
+            $config = NodeConfig::create([
+                'node_id' => $node->id,
+                'version' => $version,
+                'content_yaml' => $default->content_yaml,
+                'sha256' => (string) $default->sha256,
+                'status' => NodeConfig::STATUS_PUBLISHED,
+                'is_current' => false,
+                'published_at' => now(),
+            ]);
+
+            AuditLogger::log('config.applied_from_library', $config, [
+                'node_id' => $node->node_id,
+                'version' => $version,
+                'status' => $status,
+            ], 'agent');
+        }
 
         $config->status = in_array($status, [NodeConfig::STATUS_APPLIED, 'applied'], true)
             ? NodeConfig::STATUS_APPLIED
