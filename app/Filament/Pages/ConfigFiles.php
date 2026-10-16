@@ -128,13 +128,16 @@ class ConfigFiles extends Page implements HasActions, HasForms, HasTable
                     ->tooltip(fn (ConfigFile $record): string => $record->is_default ? '当前默认版本（下发时默认取它）' : '')
                     ->sortable(),
                 Tables\Columns\TextColumn::make('note')->label('备注')->placeholder('-')->wrap(),
+                // config_sha256：与节点列表「配置版本」用的是同一个指纹 —— 节点上报的
+                // config_sha256 命中哪一版，节点列表就显示哪一版；这里把全量哈希摆出来便于对照。
                 Tables\Columns\TextColumn::make('sha256')
-                    ->label('sha256')
-                    ->formatStateUsing(fn (ConfigFile $record): string => $record->shortHash())
+                    ->label('config_sha256')
                     ->copyable()
                     ->copyableState(fn (ConfigFile $record): string => (string) $record->sha256)
-                    ->tooltip(fn (ConfigFile $record): string => (string) $record->sha256)
-                    ->toggleable(isToggledHiddenByDefault: true),
+                    ->searchable()
+                    ->wrap()
+                    ->extraCellAttributes(['class' => 'font-mono text-xs'])
+                    ->tooltip(fn (ConfigFile $record): string => (string) $record->sha256),
                 Tables\Columns\TextColumn::make('created_at')->label('发布时间')->since()->sortable()
                     ->tooltip(fn (ConfigFile $record): ?string => $record->created_at?->toDateTimeString()),
                 Tables\Columns\TextColumn::make('updated_at')->label('最后修改时间')->since()->sortable()

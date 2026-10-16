@@ -41,6 +41,9 @@ class ConfigFilesPageTest extends TestCase
             ->assertCanSeeTableRecords([$v1, $v2])
             ->assertTableColumnExists('version')
             ->assertTableColumnExists('note')
+            ->assertTableColumnExists('sha256')
+            ->assertTableColumnStateSet('sha256', $v1->sha256, $v1)
+            ->assertTableColumnStateSet('sha256', $v2->sha256, $v2)
             ->assertTableColumnExists('created_at')
             ->assertTableColumnExists('updated_at')
             // 与节点无关：没有节点列
@@ -111,6 +114,7 @@ class ConfigFilesPageTest extends TestCase
         $this->assertStringContainsString('配置版本文件', $contents);
         $this->assertStringContainsString('创建版本', $contents);
         $this->assertStringContainsString('当前默认版本', $contents);
+        $this->assertStringContainsString('config_sha256', $contents);
         $this->assertStringContainsString('保存', $contents);
         $this->assertStringContainsString('发布时间', $contents);
         $this->assertStringContainsString('最后修改时间', $contents);
