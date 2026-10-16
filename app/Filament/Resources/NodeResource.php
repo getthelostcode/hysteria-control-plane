@@ -35,7 +35,7 @@ class NodeResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return parent::getEloquentQuery()->with(['latestMetric', 'latestConfig']);
+        return parent::getEloquentQuery()->with(['latestMetric', 'latestConfig', 'activeConfig']);
     }
 
     public static function form(Form $form): Form
@@ -67,6 +67,10 @@ class NodeResource extends Resource
 
     public static function table(Table $table): Table
     {
+        // 每次渲染查一次「版本管理里的默认版本」；闭包捕获，避免逐行查询（也不能用静态缓存：
+        // 常驻进程/测试之间会串味，曾因为静态缓存把 v1 一直当默认版本）。
+        $libraryDefault = app(\App\Services\ConfigFileService::class)->default()?->version;
+
         return $table
             ->poll('5s')
             ->defaultSort('last_seen_at', 'desc')
@@ -113,7 +117,44 @@ class NodeResource extends Resource
                     ->suffix('%')
                     ->numeric(decimalPlaces: 1),
                 Tables\Columns\TextColumn::make('latestMetric.users')->label('用户')->numeric(),
-                Tables\Columns\TextColumn::make('latestConfig.version')->label('配置版本')->badge()->default('-'),
+                // 配置版本：数字以「配置管理 → 版本管理」里指定的**默认版本**为准；
+                // 节点还没同步到它时用警告色与 tooltip 标出来（不然运维看不出谁落后）。
+                Tables\Columns\TextColumn::make('library_config_version')
+                    ->label('配置版本')
+                    ->badge()
+                    ->state(function (Node $record) use ($libraryDefault): string {
+                        if ($libraryDefault !== null) {
+                            return 'v' . $libraryDefault;
+                        }
+
+                        $applied = $record->activeConfig?->version;
+
+                        return $applied === null ? '-' : 'v' . $applied;
+                    })
+                    ->color(function (Node $record) use ($libraryDefault): string {
+                        if ($libraryDefault === null) {
+                            return 'gray';
+                        }
+
+                        return (int) ($record->activeConfig?->version ?? 0) === $libraryDefault ? 'success' : 'warning';
+                    })
+                    ->tooltip(function (Node $record) use ($libraryDefault): string {
+                        $applied = $record->activeConfig?->version;
+
+                        if ($libraryDefault === null) {
+                            return $applied === null
+                                ? '配置版本文件库里还没有默认版本'
+                                : '配置版本文件库里还没有默认版本；节点当前生效 v' . $applied;
+                        }
+
+                        if ($applied === null) {
+                            return '库默认版本 v' . $libraryDefault . '；该节点还没有生效记录';
+                        }
+
+                        return (int) $applied === $libraryDefault
+                            ? '已同步到库默认版本 v' . $libraryDefault
+                            : '库默认版本 v' . $libraryDefault . '；该节点当前生效 v' . $applied . '（待同步）';
+                    }),
                 Tables\Columns\TextColumn::make('last_seen_at')
                     ->label('最后心跳')
                     ->since()

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Filament;
 
 use App\Filament\Pages\ManageSettings;
+use App\Filament\Resources\NodeResource\Pages\ListNodes;
 use App\Filament\Widgets\StatsOverviewWidget;
 use App\Models\Node;
 use App\Support\Setting;
@@ -170,5 +171,27 @@ class AdminPanelTest extends TestCase
         $this->get('/admin/node-configs/' . $config->getKey())
             ->assertOk()
             ->assertSee('编辑正文');
+    }
+
+    /** 节点列表的「配置版本」以版本管理（配置版本文件库）的默认版本为准。 */
+    public function test_node_list_shows_the_library_default_version(): void
+    {
+        $this->actingAs($this->adminUser());
+
+        $node = Node::factory()->create(['name' => 'lib-version-node']);
+
+        // 节点自己发布的是 v1 且已生效（模拟「按节点版本」的情况）
+        $configs = app(\App\Services\ConfigService::class);
+        $own = $configs->publish($node, "listen: :443\n");
+        $configs->acknowledge($node, $own->version, 'applied');
+
+        // 版本管理里建两份文件，默认版本 = v2
+        $files = app(\App\Services\ConfigFileService::class);
+        $files->create("listen: :443\n", null, '库 v1');
+        $lib = $files->create("listen: :8443\n", null, '库 v2');
+
+        Livewire::test(ListNodes::class)
+            ->assertSuccessful()
+            ->assertTableColumnStateSet('library_config_version', 'v' . $lib->version, $node->refresh());
     }
 }
