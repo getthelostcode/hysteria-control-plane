@@ -21,6 +21,41 @@ class NodeConfigVersionTest extends TestCase
         return Node::factory()->make(['meta' => $meta]);
     }
 
+    /** sha256 反查优先于节点自报的版本号：自报 v2、内容却是 v1 时，显示 v1。 */
+    public function test_sha256_wins_over_the_self_reported_version(): void
+    {
+        $sha = str_repeat('d', 64);
+        $node = $this->nodeWithMeta(['config_version' => '2', 'config_sha256' => $sha]);
+
+        [$label, $tip] = NodeConfigVersion::resolve($node, 2, [$sha => 1]);
+
+        $this->assertSame('v1', $label, 'sha256 命中版本管理 v1，就该显示 v1（自报的 2 不可信）');
+        $this->assertStringContainsString('按版本管理认定', $tip);
+    }
+
+    /** 版本管理里没命中 → 再按 sha256 去本节点历史里找。 */
+    public function test_falls_back_to_the_node_own_history_by_sha(): void
+    {
+        $sha = str_repeat('e', 64);
+        $node = $this->nodeWithMeta(['config_version' => '9', 'config_sha256' => $sha]);
+
+        [$label, $tip] = NodeConfigVersion::resolve($node, 2, [], static fn ($n, $s): ?int => $s === $sha ? 4 : null);
+
+        $this->assertSame('v4', $label);
+        $this->assertStringContainsString('按本节点配置历史认定', $tip);
+    }
+
+    /** 两处都没命中 → 退回自报版本号，但必须说明是「sha256 未命中」。 */
+    public function test_self_reported_version_is_last_resort_and_says_so(): void
+    {
+        $node = $this->nodeWithMeta(['config_version' => '7', 'config_sha256' => str_repeat('f', 64)]);
+
+        [$label, $tip] = NodeConfigVersion::resolve($node, 2, []);
+
+        $this->assertSame('v7', $label);
+        $this->assertStringContainsString('sha256 未命中', $tip);
+    }
+
     public function test_uses_the_version_the_node_actually_has_on_disk(): void
     {
         $node = $this->nodeWithMeta(['config_version' => '1', 'config_sha256' => str_repeat('a', 64)]);

@@ -6,6 +6,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\NodeResource\Pages;
 use App\Models\ConfigFile;
+use App\Models\NodeConfig;
 use App\Models\Node;
 use App\Models\NodeCommand;
 use App\Services\CommandService;
@@ -73,7 +74,22 @@ class NodeResource extends Resource
         // 版本管理的默认版本 + sha→版本 映射：渲染前查一次，避免逐行查库。
         // 具体取值逻辑在 App\Support\NodeConfigVersion（可单测、可用真库数据核对）。
         $libraryDefault = app(ConfigFileService::class)->default()?->version;
-        $libraryBySha = ConfigFile::query()->whereNotNull('sha256')->pluck('version', 'sha256')->all();
+        $libraryBySha = ConfigFile::query()->whereNotNull('sha256')->pluck('version', 'sha256')
+            ->mapWithKeys(static fn ($version, $sha): array => [strtolower((string) $sha) => (int) $version])->all();
+
+        // 版本管理里没命中时，再按 sha256 去该节点自己的配置历史里找。
+        // 每个节点每次渲染最多查一次（memo 挂在这次渲染的闭包里，不用静态属性：常驻进程/测试会串味）。
+        $nodeShaMemo = [];
+        $nodeVersionBySha = function (Node $node, string $sha) use (&$nodeShaMemo): ?int {
+            $map = $nodeShaMemo[$node->getKey()] ??= NodeConfig::query()
+                ->where('node_id', $node->getKey())
+                ->whereNotNull('sha256')
+                ->pluck('version', 'sha256')
+                ->mapWithKeys(static fn ($version, $s): array => [strtolower((string) $s) => (int) $version])
+                ->all();
+
+            return $map[$sha] ?? null;
+        };
 
         return $table
             ->poll('5s')
@@ -145,9 +161,9 @@ class NodeResource extends Resource
                 Tables\Columns\TextColumn::make('disk_config_version')
                     ->label('配置版本')
                     ->badge()
-                    ->state(fn (Node $record): string => NodeConfigVersion::resolve($record, $libraryDefault, $libraryBySha)[0])
-                    ->color(fn (Node $record): string => NodeConfigVersion::resolve($record, $libraryDefault, $libraryBySha)[2])
-                    ->tooltip(fn (Node $record): string => NodeConfigVersion::resolve($record, $libraryDefault, $libraryBySha)[1]),
+                    ->state(fn (Node $record): string => NodeConfigVersion::resolve($record, $libraryDefault, $libraryBySha, $nodeVersionBySha)[0])
+                    ->color(fn (Node $record): string => NodeConfigVersion::resolve($record, $libraryDefault, $libraryBySha, $nodeVersionBySha)[2])
+                    ->tooltip(fn (Node $record): string => NodeConfigVersion::resolve($record, $libraryDefault, $libraryBySha, $nodeVersionBySha)[1]),
                 Tables\Columns\TextColumn::make('version')->label('Hysteria')->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('meta.protocol')
                     ->label('通道')
