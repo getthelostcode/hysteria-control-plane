@@ -210,4 +210,32 @@ class AdminPanelTest extends TestCase
             ->assertTableColumnStateSet('disk_config_version', '未识别', $handEdited->refresh())
             ->assertTableColumnStateSet('disk_config_version', '-', $silent->refresh());
     }
+
+    /** 节点列表必须同时显示「最后心跳」与「配置版本」两列。 */
+    public function test_node_list_shows_last_heartbeat_and_config_version(): void
+    {
+        $this->actingAs($this->adminUser());
+
+        $fresh = Node::factory()->create([
+            'name' => 'hb-fresh',
+            'last_seen_at' => now()->subSeconds(20),
+            'meta' => ['config_version' => '4', 'config_sha256' => str_repeat('d', 64)],
+        ]);
+        $stale = Node::factory()->create([
+            'name' => 'hb-stale',
+            'last_seen_at' => now()->subMinutes(30),
+        ]);
+
+        $html = $this->get('/admin/nodes')->assertOk()->getContent();
+        $this->assertStringContainsString('最后心跳', $html);
+        $this->assertStringContainsString('配置版本', $html);
+
+        Livewire::test(ListNodes::class)
+            ->assertSuccessful()
+            ->assertTableColumnExists('last_seen_at')
+            ->assertTableColumnExists('disk_config_version')
+            // 相对时间渲染：20 秒前 → 「20 seconds ago」/「秒前」；半小时前 → 「30 minutes ago」/「分钟前」
+            ->assertTableColumnStateSet('last_seen_at', $fresh->last_seen_at, $fresh)
+            ->assertTableColumnStateSet('disk_config_version', 'v4', $fresh);
+    }
 }

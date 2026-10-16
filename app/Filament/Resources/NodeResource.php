@@ -127,6 +127,24 @@ class NodeResource extends Resource
                         $record->status === Node::STATUS_DISABLED => 'gray',
                         default => 'warning',
                     }),
+                // 最后心跳：节点列表必须能一眼看到「谁还在线、谁多久没动了」。
+                // 相对时间（3 分钟前），颜色按心跳新鲜度分级；悬停给绝对时间。
+                Tables\Columns\TextColumn::make('last_seen_at')
+                    ->label('最后心跳')
+                    ->since()
+                    ->placeholder('从未')
+                    ->sortable()
+                    ->color(fn (Node $record): string => match (true) {
+                        $record->last_seen_at === null => 'gray',
+                        $record->last_seen_at->greaterThan(now()->subSeconds(120)) => 'success',
+                        $record->last_seen_at->greaterThan(now()->subSeconds(600)) => 'warning',
+                        default => 'danger',
+                    })
+                    ->tooltip(fn (Node $record): string => $record->last_seen_at === null
+                        ? '还没有收到过心跳（节点可能未安装/未注册）'
+                        : '最近一次心跳：' . $record->last_seen_at->toDateTimeString()
+                            . '（正常每 30s 一次；超过 90s 视为断线）'),
+
                 Tables\Columns\TextColumn::make('ip_v6')
                     ->label('IPv6 出口')
                     ->state(fn (Node $record): ?string => data_get($record->meta, 'ip_v6'))
