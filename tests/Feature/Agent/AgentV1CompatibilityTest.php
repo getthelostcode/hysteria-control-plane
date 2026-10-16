@@ -512,4 +512,33 @@ class AgentV1CompatibilityTest extends TestCase
             'status' => 'applied',
         ]);
     }
+
+    /** 心跳把节点**实盘** config.yaml 的身份（版本号/sha256/路径）收养进 meta。 */
+    public function test_heartbeat_adopts_the_on_disk_config_identity(): void
+    {
+        [$token, $plain] = \App\Models\EnrollToken::issue([]);
+        $enrolled = $this->postJson('/api/v1/agent/enroll', $this->agentPayload($plain, [
+            'hostname' => 'disk-adopt', 'machine_id' => 'machine-disk-adopt',
+        ]))->assertOk();
+
+        $node = \App\Models\Node::query()->where('node_id', $enrolled->json('node_id'))->firstOrFail();
+        $jwt = Jwt::encode(['sub' => $node->node_id, 'exp' => now()->addHour()->getTimestamp()], $node->plainSecret());
+
+        $this->withHeaders(['Authorization' => 'Bearer ' . $jwt])
+            ->postJson('/api/v1/agent/heartbeat', [
+                'node_id' => $node->node_id,
+                'agent_version' => '0.1.0',
+                'ready' => true,
+                'hysteria_running' => true,
+                'config_version' => 12,
+                'config_sha256' => str_repeat('c', 64),
+                'config_path' => '/etc/hysteria/config.yaml',
+            ])
+            ->assertOk();
+
+        $meta = $node->refresh()->meta;
+        $this->assertSame('12', $meta['config_version']);
+        $this->assertSame(str_repeat('c', 64), $meta['config_sha256']);
+        $this->assertSame('/etc/hysteria/config.yaml', $meta['config_path']);
+    }
 }

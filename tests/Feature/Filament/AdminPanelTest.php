@@ -173,25 +173,41 @@ class AdminPanelTest extends TestCase
             ->assertSee('编辑正文');
     }
 
-    /** 节点列表的「配置版本」以版本管理（配置版本文件库）的默认版本为准。 */
-    public function test_node_list_shows_the_library_default_version(): void
+    /** 节点列表的「配置版本」以**节点实盘 config.yaml**为准（agent 心跳自报的版本号/sha256）。 */
+    public function test_node_list_shows_the_version_reported_by_the_node_disk(): void
     {
         $this->actingAs($this->adminUser());
 
-        $node = Node::factory()->create(['name' => 'lib-version-node']);
-
-        // 节点自己发布的是 v1 且已生效（模拟「按节点版本」的情况）
-        $configs = app(\App\Services\ConfigService::class);
-        $own = $configs->publish($node, "listen: :443\n");
-        $configs->acknowledge($node, $own->version, 'applied');
-
-        // 版本管理里建两份文件，默认版本 = v2
         $files = app(\App\Services\ConfigFileService::class);
         $files->create("listen: :443\n", null, '库 v1');
-        $lib = $files->create("listen: :8443\n", null, '库 v2');
+        $lib = $files->create("listen: :8443\n", null, '库 v2');   // 版本管理默认版本 = v2
+
+        // 节点 A：实盘就是库 v2（已同步）
+        $synced = Node::factory()->create([
+            'name' => 'disk-synced',
+            'meta' => ['config_version' => (string) $lib->version, 'config_sha256' => (string) $lib->sha256, 'config_path' => '/etc/hysteria/config.yaml'],
+        ]);
+
+        // 节点 B：实盘还是 panel v1（落后一版，只是 sha 对不上任何库文件）
+        $behind = Node::factory()->create([
+            'name' => 'disk-behind',
+            'meta' => ['config_version' => '3', 'config_sha256' => str_repeat('a', 64)],
+        ]);
+
+        // 节点 C：实盘被手工改过 —— 认不出对应版本，但 sha256 有上报
+        $handEdited = Node::factory()->create([
+            'name' => 'disk-hand-edited',
+            'meta' => ['config_sha256' => str_repeat('b', 64)],
+        ]);
+
+        // 节点 D：还没上报
+        $silent = Node::factory()->create(['name' => 'disk-silent', 'meta' => []]);
 
         Livewire::test(ListNodes::class)
             ->assertSuccessful()
-            ->assertTableColumnStateSet('library_config_version', 'v' . $lib->version, $node->refresh());
+            ->assertTableColumnStateSet('disk_config_version', 'v' . $lib->version, $synced)
+            ->assertTableColumnStateSet('disk_config_version', 'v3', $behind->refresh())
+            ->assertTableColumnStateSet('disk_config_version', '未识别', $handEdited->refresh())
+            ->assertTableColumnStateSet('disk_config_version', '-', $silent->refresh());
     }
 }

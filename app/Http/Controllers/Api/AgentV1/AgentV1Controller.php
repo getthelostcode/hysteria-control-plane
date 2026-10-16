@@ -327,6 +327,12 @@ class AgentV1Controller extends Controller
             // 证书路径也照抄：面板写死的路径在节点上不存在时 agent 会整份拒收（jp8 现场）
             'cert_path' => trim((string) $request->input('cert_path', '')),
             'key_path' => trim((string) $request->input('key_path', '')),
+            // 节点**实盘** config.yaml 的身份：版本号 + sha256 + 路径。
+            // 节点列表的「配置版本」以它为准 —— 面板的期望版本（node_configs/config_files）只作为参照，
+            // 手工改过 / 没同步上的节点必须能一眼看出来。
+            'config_version' => trim((string) $request->input('config_version', '')),
+            'config_sha256' => trim((string) $request->input('config_sha256', '')),
+            'config_path' => trim((string) $request->input('config_path', '')),
         ], static fn ($value) => $value !== '');
 
         if ($reported !== []) {

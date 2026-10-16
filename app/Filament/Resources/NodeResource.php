@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\NodeResource\Pages;
+use App\Models\ConfigFile;
 use App\Models\Node;
 use App\Models\NodeCommand;
 use App\Services\CommandService;
+use App\Services\ConfigFileService;
 use App\Services\ConfigService;
 use App\Support\HysteriaConfigBuilder;
 use Filament\Forms;
@@ -67,8 +69,43 @@ class NodeResource extends Resource
 
     public static function table(Table $table): Table
     {
-        // 每次渲染查一次「版本管理里的默认版本」；闭包捕获，避免逐行查询（也不能用静态缓存：
-        // 常驻进程/测试之间会串味，曾因为静态缓存把 v1 一直当默认版本）。
+        // 版本管理的默认版本 + sha→版本 映射：渲染前查一次，避免逐行查库。
+        $libraryDefault = app(ConfigFileService::class)->default()?->version;
+        $libraryBySha = ConfigFile::query()->whereNotNull('sha256')->pluck('version', 'sha256')->all();
+
+        // 解析节点**实盘**配置的版本：agent 自报的版本号优先，其次用自报 sha256 去版本库里对号；
+        // 都对不上就是「未识别」（被手工改过 / 还没同步过的旧文件），返回 [显示文案, tooltip, 颜色]。
+        $resolveDiskVersion = function (Node $record) use ($libraryDefault, $libraryBySha): array {
+            $reported = (int) ($record->meta['config_version'] ?? 0);
+            $sha = (string) ($record->meta['config_sha256'] ?? '');
+            $path = (string) ($record->meta['config_path'] ?? '/etc/hysteria/config.yaml');
+            $shortSha = $sha !== '' ? substr($sha, 0, 12) : '';
+
+            $onDisk = $reported > 0 ? $reported : (int) ($libraryBySha[$sha] ?? 0);
+
+            if ($onDisk <= 0) {
+                if ($sha === '') {
+                    return ['-', '节点还没上报实盘配置（agent 心跳会带上版本号与 sha256）', 'gray'];
+                }
+
+                return [
+                    '未识别',
+                    '节点实盘 ' . $path . ' 的 sha256=' . $shortSha . '…，控制面里没有对应版本（可能被手工改过）'
+                        . ($libraryDefault !== null ? '；版本管理默认版本 v' . $libraryDefault : ''),
+                    'danger',
+                ];
+            }
+
+            $intro = '节点实盘 ' . $path . '：v' . $onDisk . '（sha256 ' . $shortSha . ($shortSha !== '' ? '…' : '未上报') . '）';
+
+            if ($libraryDefault === null) {
+                return ['v' . $onDisk, $intro . '；版本管理里还没有默认版本', 'gray'];
+            }
+
+            return $onDisk === $libraryDefault
+                ? ['v' . $onDisk, $intro . '；与版本管理默认版本一致', 'success']
+                : ['v' . $onDisk, $intro . '；版本管理默认版本 v' . $libraryDefault . '（待同步）', 'warning'];
+        };
         $libraryDefault = app(\App\Services\ConfigFileService::class)->default()?->version;
 
         return $table
@@ -117,49 +154,15 @@ class NodeResource extends Resource
                     ->suffix('%')
                     ->numeric(decimalPlaces: 1),
                 Tables\Columns\TextColumn::make('latestMetric.users')->label('用户')->numeric(),
-                // 配置版本：数字以「配置管理 → 版本管理」里指定的**默认版本**为准；
-                // 节点还没同步到它时用警告色与 tooltip 标出来（不然运维看不出谁落后）。
-                Tables\Columns\TextColumn::make('library_config_version')
+                // 配置版本：**以节点实盘 /etc/hysteria/config.yaml 为准**（agent 心跳自报的
+                // config_version / config_sha256）。面板的期望版本只用作对比：
+                // 与「版本管理」的默认版本一致 → 绿；不一致 → 黄（待同步）；认不出 → 红（被手工改过）。
+                Tables\Columns\TextColumn::make('disk_config_version')
                     ->label('配置版本')
                     ->badge()
-                    ->state(function (Node $record) use ($libraryDefault): string {
-                        if ($libraryDefault !== null) {
-                            return 'v' . $libraryDefault;
-                        }
-
-                        $applied = $record->activeConfig?->version;
-
-                        return $applied === null ? '-' : 'v' . $applied;
-                    })
-                    ->color(function (Node $record) use ($libraryDefault): string {
-                        if ($libraryDefault === null) {
-                            return 'gray';
-                        }
-
-                        return (int) ($record->activeConfig?->version ?? 0) === $libraryDefault ? 'success' : 'warning';
-                    })
-                    ->tooltip(function (Node $record) use ($libraryDefault): string {
-                        $applied = $record->activeConfig?->version;
-
-                        if ($libraryDefault === null) {
-                            return $applied === null
-                                ? '配置版本文件库里还没有默认版本'
-                                : '配置版本文件库里还没有默认版本；节点当前生效 v' . $applied;
-                        }
-
-                        if ($applied === null) {
-                            return '库默认版本 v' . $libraryDefault . '；该节点还没有生效记录';
-                        }
-
-                        return (int) $applied === $libraryDefault
-                            ? '已同步到库默认版本 v' . $libraryDefault
-                            : '库默认版本 v' . $libraryDefault . '；该节点当前生效 v' . $applied . '（待同步）';
-                    }),
-                Tables\Columns\TextColumn::make('last_seen_at')
-                    ->label('最后心跳')
-                    ->since()
-                    ->sortable()
-                    ->color(fn (Node $record): string => $record->isOnline() ? 'success' : 'danger'),
+                    ->state(fn (Node $record): string => $resolveDiskVersion($record)[0])
+                    ->color(fn (Node $record): string => $resolveDiskVersion($record)[2])
+                    ->tooltip(fn (Node $record): string => $resolveDiskVersion($record)[1]),
                 Tables\Columns\TextColumn::make('version')->label('Hysteria')->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('meta.protocol')
                     ->label('通道')
