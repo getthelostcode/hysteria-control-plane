@@ -27,7 +27,7 @@
 ## 2.5 SQLite 试用模式
 
 除了生产用的 MySQL 8，控制平面也可以在 SQLite 上完整运行（迁移、种子、agent API、
-管理 API、Filament 面板、OpenAPI 均已验证；本仓库两套测试配置都是 89 用例全绿）：
+管理 API、Filament 面板、OpenAPI 均已验证；当前实测 183 用例 / 866 断言全绿）：
 
 ```bash
 php artisan test -c phpunit.sqlite.xml        # 内存库，不落文件
