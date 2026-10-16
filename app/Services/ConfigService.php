@@ -157,6 +157,72 @@ final class ConfigService
                 ->orderByDesc('version')
                 ->first();
 
+            // 回滚风暴护栏 ①：最新一版已经是「回滚目标的内容」了 → 再回滚只是换个版本号，
+            // 节点环境的问题（端口被占、证书不对）不会因此消失。真实现场：jp8 的 agent 反复回执
+            // v2 failed，面板每轮回滚都新建一版，5 秒一版涨到 v460。
+            $newest = NodeConfig::query()->where('node_id', $node->id)->orderByDesc('version')->first();
+
+            if ($fallback !== null && $newest !== null
+                && (string) $newest->sha256 === (string) $fallback->sha256
+                && (int) $newest->version > $version) {
+                AuditLogger::log('config.auto_rollback_skipped', $config, [
+                    'node_id' => $node->node_id,
+                    'version' => $version,
+                    'newest_version' => $newest->version,
+                    'reason' => '最新版本已是回滚目标内容（sha256 一致），跳过以免回滚风暴',
+                ], 'system');
+
+                $node->refresh();
+                $node->status = Node::STATUS_ERROR;
+                $node->save();
+
+                return $config->refresh();
+            }
+
+            // 回滚风暴护栏 ②：同一节点短时间内已经自动回滚过多次 → 说明是环境问题而非内容问题，
+            // 不再自动生成新版本，把失败原因留在面板上让人去修。
+            $recentRollbacks = NodeConfigHistory::query()
+                ->where('node_id', $node->id)
+                ->where('action', NodeConfigHistory::ACTION_ROLLBACK)
+                ->where('created_at', '>=', now()->subMinutes(10))
+                ->where('reason', 'like', 'auto rollback%')
+                ->count();
+
+            if ($fallback !== null && $recentRollbacks >= 3) {
+                AuditLogger::log('config.auto_rollback_skipped', $config, [
+                    'node_id' => $node->node_id,
+                    'version' => $version,
+                    'recent_auto_rollbacks' => $recentRollbacks,
+                    'reason' => '10 分钟内自动回滚已达 ' . $recentRollbacks . ' 次，停止自动回滚（疑似环境问题）',
+                ], 'system');
+
+                $node->refresh();
+                $node->status = Node::STATUS_ERROR;
+                $node->save();
+
+                return $config->refresh();
+            }
+
+            // 回滚风暴护栏 ③：要回滚到的内容与刚失败的版本**是同一份**时，回滚毫无意义 ——
+            // 节点会以完全相同的内容再失败一次、再触发一次回滚，于是每轮一个新版本，
+            // 控制面版本号一路涨（真实现场：jp8 每 5 秒新增一版，几分钟涨到 v446）。
+            // 这种情况通常是「环境问题」而非「内容问题」（端口被 systemd 的 hysteria 占着、
+            // 证书路径不对…），回滚救不了，只能如实把错误留在面板上让人去修。
+            if ($fallback !== null && (string) $fallback->sha256 === (string) $config->sha256) {
+                AuditLogger::log('config.auto_rollback_skipped', $config, [
+                    'node_id' => $node->node_id,
+                    'version' => $version,
+                    'fallback_version' => $fallback->version,
+                    'reason' => '回滚目标与失败版本内容相同（sha256 一致），跳过以免形成回滚循环',
+                ], 'system');
+
+                $node->refresh();
+                $node->status = Node::STATUS_ERROR;
+                $node->save();
+
+                return $config->refresh();
+            }
+
             if ($fallback !== null) {
                 // Acceptance criterion: a failed apply must roll the node back automatically.
                 $this->rollback($node, $fallback->version, null, 'auto rollback: version ' . $version . ' failed to apply');

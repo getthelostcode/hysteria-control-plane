@@ -152,4 +152,72 @@ class ConfigDeliveryTest extends TestCase
         $this->agentCall($node, 'POST', '/api/agent/v1/config/ack', ['version' => 42, 'status' => 'applied'])
             ->assertStatus(404);
     }
+
+    /** 回滚目标与失败版本内容相同（sha256 一致）时不得回滚 —— 否则每轮新增一版，形成风暴。 */
+    public function test_auto_rollback_is_skipped_when_the_fallback_has_the_same_content(): void
+    {
+        $node = Node::factory()->create(['name' => 'rollback-storm-guard']);
+        $configs = app(\App\Services\ConfigService::class);
+
+        // v1 发布并成功应用（内容 A）
+        $v1 = $configs->publish($node, "listen: :443\n# A\n");
+        $configs->acknowledge($node, $v1->version, 'applied');
+
+        // v2 是**同一份内容**（A），应用失败 → 回滚目标(v1) 与失败版本 sha 相同 → 跳过自动回滚
+        $v2 = $configs->publish($node, "listen: :443\n# A\n");
+        $configs->acknowledge($node, $v2->version, 'failed', 'Hysteria 进程已退出（exit=1）');
+
+        $this->assertSame(
+            $v2->version,
+            (int) NodeConfig::query()->where('node_id', $node->id)->max('version'),
+            '内容相同的回滚必须被跳过，否则版本号会被每轮回滚推高（jp8 现场：每 5 秒一版）'
+        );
+        $this->assertDatabaseHas('audit_logs', ['action' => 'config.auto_rollback_skipped']);
+
+        // 再来三次失败回执，版本数也不该增长（风暴护栏生效）
+        $before = NodeConfig::query()->where('node_id', $node->id)->count();
+        for ($i = 0; $i < 3; $i++) {
+            $configs->acknowledge($node, $v2->version, 'failed', '同样的失败');
+        }
+        $this->assertSame($before, NodeConfig::query()->where('node_id', $node->id)->count());
+
+        // 但“内容确实不同”的失败仍然要自动回滚（保留原有验收标准）
+        $v3 = $configs->publish($node, "listen: :443\n# C\n");
+        $configs->acknowledge($node, $v3->version, 'failed', '坏配置');
+
+        $latest = NodeConfig::query()->where('node_id', $node->id)->orderByDesc('version')->first();
+        $this->assertGreaterThan($v3->version, (int) $latest->version, '内容不同的失败应当生成回滚版本');
+        $this->assertSame($v1->sha256, $latest->sha256, '回滚到最近一次成功应用的正文');
+    }
+
+    /** 回滚风暴护栏 ①：最新版本已是回滚目标内容时，重复的失败回执不得再新建版本。 */
+    public function test_repeated_auto_rollback_does_not_grow_versions_without_end(): void
+    {
+        $node = Node::factory()->create(['name' => 'rollback-storm-latest-guard']);
+        $configs = app(\App\Services\ConfigService::class);
+
+        // v1 内容 A：应用成功（这是回滚目标）
+        $v1 = $configs->publish($node, "listen: :443\n# A\n");
+        $configs->acknowledge($node, $v1->version, 'applied');
+
+        // v2 内容 B：失败 → 正常自动回滚一次，产生 v3（内容 A）
+        $v2 = $configs->publish($node, "listen: :443\n# B\n");
+        $configs->acknowledge($node, $v2->version, 'failed', 'Hysteria 起不来: listen udp :443: bind: address already in use');
+
+        $afterFirstRollback = NodeConfig::query()->where('node_id', $node->id)->count();
+        $this->assertSame(3, $afterFirstRollback, '第一次失败应当回滚出一版（v3 = 内容 A）');
+
+        // 关键：节点又回执 v2 failed（真实现场就是这条在打转）→ 最新版已是内容 A，不得再涨版本
+        for ($i = 0; $i < 5; $i++) {
+            $configs->acknowledge($node, $v2->version, 'failed', '还是同一个环境问题');
+        }
+
+        $this->assertSame(
+            $afterFirstRollback,
+            NodeConfig::query()->where('node_id', $node->id)->count(),
+            '最新版已是回滚目标内容时，重复的失败回执不能再新建版本（jp8 现场：5 秒一版涨到 v460）'
+        );
+
+        $this->assertSame(0, NodeConfig::query()->where('node_id', $node->id)->where('version', '>', 3)->count(), 'v3 之后不该再有任何新版本');
+    }
 }
