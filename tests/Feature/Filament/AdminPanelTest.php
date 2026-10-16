@@ -208,7 +208,7 @@ class AdminPanelTest extends TestCase
             ->assertTableColumnStateSet('disk_config_version', 'v' . $lib->version, $synced)
             ->assertTableColumnStateSet('disk_config_version', 'v3', $behind->refresh())
             ->assertTableColumnStateSet('disk_config_version', '未识别', $handEdited->refresh())
-            ->assertTableColumnStateSet('disk_config_version', '-', $silent->refresh());
+            ->assertTableColumnStateSet('disk_config_version', \App\Support\NodeConfigVersion::UNREPORTED, $silent->refresh());
     }
 
     /** 节点列表必须同时显示「最后心跳」与「配置版本」两列。 */

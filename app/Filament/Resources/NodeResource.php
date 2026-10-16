@@ -12,6 +12,7 @@ use App\Services\CommandService;
 use App\Services\ConfigFileService;
 use App\Services\ConfigService;
 use App\Support\HysteriaConfigBuilder;
+use App\Support\NodeConfigVersion;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Notifications\Notification;
@@ -70,43 +71,9 @@ class NodeResource extends Resource
     public static function table(Table $table): Table
     {
         // 版本管理的默认版本 + sha→版本 映射：渲染前查一次，避免逐行查库。
+        // 具体取值逻辑在 App\Support\NodeConfigVersion（可单测、可用真库数据核对）。
         $libraryDefault = app(ConfigFileService::class)->default()?->version;
         $libraryBySha = ConfigFile::query()->whereNotNull('sha256')->pluck('version', 'sha256')->all();
-
-        // 解析节点**实盘**配置的版本：agent 自报的版本号优先，其次用自报 sha256 去版本库里对号；
-        // 都对不上就是「未识别」（被手工改过 / 还没同步过的旧文件），返回 [显示文案, tooltip, 颜色]。
-        $resolveDiskVersion = function (Node $record) use ($libraryDefault, $libraryBySha): array {
-            $reported = (int) ($record->meta['config_version'] ?? 0);
-            $sha = (string) ($record->meta['config_sha256'] ?? '');
-            $path = (string) ($record->meta['config_path'] ?? '/etc/hysteria/config.yaml');
-            $shortSha = $sha !== '' ? substr($sha, 0, 12) : '';
-
-            $onDisk = $reported > 0 ? $reported : (int) ($libraryBySha[$sha] ?? 0);
-
-            if ($onDisk <= 0) {
-                if ($sha === '') {
-                    return ['-', '节点还没上报实盘配置（agent 心跳会带上版本号与 sha256）', 'gray'];
-                }
-
-                return [
-                    '未识别',
-                    '节点实盘 ' . $path . ' 的 sha256=' . $shortSha . '…，控制面里没有对应版本（可能被手工改过）'
-                        . ($libraryDefault !== null ? '；版本管理默认版本 v' . $libraryDefault : ''),
-                    'danger',
-                ];
-            }
-
-            $intro = '节点实盘 ' . $path . '：v' . $onDisk . '（sha256 ' . $shortSha . ($shortSha !== '' ? '…' : '未上报') . '）';
-
-            if ($libraryDefault === null) {
-                return ['v' . $onDisk, $intro . '；版本管理里还没有默认版本', 'gray'];
-            }
-
-            return $onDisk === $libraryDefault
-                ? ['v' . $onDisk, $intro . '；与版本管理默认版本一致', 'success']
-                : ['v' . $onDisk, $intro . '；版本管理默认版本 v' . $libraryDefault . '（待同步）', 'warning'];
-        };
-        $libraryDefault = app(\App\Services\ConfigFileService::class)->default()?->version;
 
         return $table
             ->poll('5s')
@@ -178,9 +145,9 @@ class NodeResource extends Resource
                 Tables\Columns\TextColumn::make('disk_config_version')
                     ->label('配置版本')
                     ->badge()
-                    ->state(fn (Node $record): string => $resolveDiskVersion($record)[0])
-                    ->color(fn (Node $record): string => $resolveDiskVersion($record)[2])
-                    ->tooltip(fn (Node $record): string => $resolveDiskVersion($record)[1]),
+                    ->state(fn (Node $record): string => NodeConfigVersion::resolve($record, $libraryDefault, $libraryBySha)[0])
+                    ->color(fn (Node $record): string => NodeConfigVersion::resolve($record, $libraryDefault, $libraryBySha)[2])
+                    ->tooltip(fn (Node $record): string => NodeConfigVersion::resolve($record, $libraryDefault, $libraryBySha)[1]),
                 Tables\Columns\TextColumn::make('version')->label('Hysteria')->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\TextColumn::make('meta.protocol')
                     ->label('通道')
