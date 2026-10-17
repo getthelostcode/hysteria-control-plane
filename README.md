@@ -490,34 +490,7 @@ tests/                     Feature（Filament / Agent / Admin）+ tests/e2e/e2e_
 install.sh  phpunit.xml  phpunit.sqlite.xml
 ```
 
-## 11. 服务商后台（`panel/`）
-
-`panel/` 是一个**独立的 Laravel 12 + Filament 3 应用**（不是本应用的模块，有自己的 composer.json / artisan / 迁移），
-给「服务商」一个只读自己节点的后台，同时作为 `register-hysteria` 的注册接收端：
-
-| 能力 | 位置 |
-|---|---|
-| 节点注册（按运营商识别码归到服务商，同 IP 幂等） | `POST /new` |
-| 节点心跳（Bearer token、15s 写库节流、流量增量累加） | `POST /api/v1/nodes/{id}/heartbeat` |
-| 平台后台：服务商 CRUD、全局节点、平台账号、看板 | `/admin` |
-| 服务商后台：Filament 原生多租户（`Provider.code` 作 slug），只看自己节点 | `/provider/{code}` |
-
-```bash
-cd panel
-composer install
-cp .env.example .env && php artisan key:generate
-touch database/database.sqlite && php artisan migrate --seed
-php artisan filament:assets     # 面板前端资产；仓库里不带，必须执行
-php artisan serve --port=8099
-```
-
-详细文档（接口字段、数据表、缓存键、时序、排错、`install.sh` 部署）见 [panel/README.md](panel/README.md)。
-测试：`cd panel && php artisan test`（21 用例 / 72 断言，SQLite 内存库）。
-
-> 与主应用的关系：`panel/` 只消费 Hysteria2 节点注册信息，不共享数据库与代码；
-> 主应用的 agent 控制面与它互不依赖，可分别部署。
-
-## 12. 文档索引
+## 11. 文档索引
 
 | 文档 | 内容 |
 |---|---|
